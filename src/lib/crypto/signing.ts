@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import type { Envelope, Signature } from "@/types/protocol";
+import type { Envelope, Signature } from "../../types/protocol";
 import { sign, verify, toBase64, fromBase64 } from "./keys";
 
 /**

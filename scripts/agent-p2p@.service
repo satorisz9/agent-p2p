@@ -1,0 +1,39 @@
+# systemd unit template for Agent P2P daemon
+#
+# Install:
+#   sudo cp scripts/agent-p2p@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#
+# Create config per instance:
+#   mkdir -p ~/.agent-p2p/billing
+#   cat > ~/.agent-p2p/billing/env <<'EOF'
+#   AGENT_ID=agent:mindaxis:billing
+#   ORG_ID=org:mindaxis
+#   NAMESPACE=invoices-2026
+#   PORT=7700
+#   EOF
+#
+# Usage:
+#   sudo systemctl start agent-p2p@billing
+#   sudo systemctl enable agent-p2p@billing
+#   journalctl -u agent-p2p@billing -f
+
+[Unit]
+Description=Agent P2P Daemon (%i)
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+EnvironmentFile=%h/.agent-p2p/%i/env
+ExecStart=/usr/bin/npx tsx /home/opc/agent-p2p/src/daemon/server.ts \
+  --agent-id ${AGENT_ID} \
+  --org-id ${ORG_ID} \
+  --namespace ${NAMESPACE} \
+  --data-dir %h/.agent-p2p/%i \
+  --port ${PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

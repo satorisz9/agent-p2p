@@ -10,7 +10,7 @@ import type {
   AuditEvent,
   AgentId,
   SignedMessage,
-} from "@/types/protocol";
+} from "../../types/protocol";
 
 // --- Agent Registry ---
 

@@ -1,4 +1,4 @@
-import type { InvoiceIssuePayload, FixIssue } from "@/types/protocol";
+import type { InvoiceIssuePayload, FixIssue } from "../../types/protocol";
 
 export interface BusinessValidationResult {
   valid: boolean;

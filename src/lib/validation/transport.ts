@@ -1,6 +1,6 @@
-import type { Envelope, AgentRegistryEntry } from "@/types/protocol";
-import { verifyEnvelope } from "@/lib/crypto";
-import { fromBase64 } from "@/lib/crypto";
+import type { Envelope, AgentRegistryEntry } from "../../types/protocol";
+import { verifyEnvelope } from "../crypto";
+import { fromBase64 } from "../crypto";
 
 export interface TransportValidationResult {
   valid: boolean;

@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
-import type { AgentId, Envelope, MessageType } from "@/types/protocol";
-import { computePayloadHash, signEnvelope } from "@/lib/crypto";
+import type { AgentId, Envelope, MessageType } from "../../types/protocol";
+import { computePayloadHash, signEnvelope } from "../crypto";
 
 const SCHEMA_VERSION = "0.1.0";
 

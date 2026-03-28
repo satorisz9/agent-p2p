@@ -1,4 +1,4 @@
-import type { InvoiceState, MessageType } from "@/types/protocol";
+import type { InvoiceState, MessageType } from "../../types/protocol";
 
 /**
  * Invoice state machine — deterministic transitions.
@@ -14,7 +14,9 @@ const TRANSITIONS: Record<
   },
   issued: {
     "invoice.ack": "received",
+    "invoice.accept": "accepted", // issuer receives accept from receiver
     "invoice.reject": "rejected",
+    "invoice.request_fix": "fix_requested",
     "invoice.cancel": "cancelled",
   },
   received: {

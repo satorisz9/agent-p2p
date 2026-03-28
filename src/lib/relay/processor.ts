@@ -13,12 +13,12 @@ import type {
   SignedMessage,
   InvoiceIssuePayload,
   AgentId,
-} from "@/types/protocol";
-import { computePayloadHash } from "@/lib/crypto";
-import { validateTransport } from "@/lib/validation/transport";
-import { validatePayload } from "@/lib/validation/schemas";
-import { validateBusinessRules } from "@/lib/validation/business";
-import { transition } from "@/lib/state/machine";
+} from "../../types/protocol";
+import { computePayloadHash } from "../crypto";
+import { validateTransport } from "../validation/transport";
+import { validatePayload } from "../validation/schemas";
+import { validateBusinessRules } from "../validation/business";
+import { transition } from "../state/machine";
 import {
   getAgent,
   storeMessage,
@@ -26,7 +26,7 @@ import {
   getInvoiceState,
   appendAudit,
   markProcessed,
-} from "@/lib/db/store";
+} from "../db/store";
 
 export interface ProcessResult {
   accepted: boolean;
