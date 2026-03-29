@@ -24,7 +24,16 @@ export interface Invite {
 export interface InviteResult {
   success: boolean;
   peerAgentId?: string;
+  sharedNamespace?: string;
   error?: string;
+}
+
+function deriveSharedNamespace(code: string, agentIdA: string, agentIdB: string): string {
+  const sorted = [agentIdA, agentIdB].sort();
+  return createHash("sha256")
+    .update(`agent-p2p-ns:${code}:${sorted[0]}:${sorted[1]}`)
+    .digest("hex")
+    .slice(0, 32);
 }
 
 function generateCode(): string {
@@ -87,17 +96,22 @@ export class InviteManager extends EventEmitter {
               return;
             }
 
-            // Send confirmation with our agent ID
+            // Derive shared namespace from invite code + both agent IDs
+            const sharedNs = deriveSharedNamespace(code, this.agentId, msg.agent_id);
+
+            // Send confirmation with our agent ID + shared namespace
             this.sendJson(socket, {
               type: "invite_result",
               success: true,
               agent_id: this.agentId,
+              shared_namespace: sharedNs,
             });
 
-            // Emit event
+            // Emit event with shared namespace
             this.emit("invite:accepted", {
               code,
               peerAgentId: msg.agent_id,
+              sharedNamespace: sharedNs,
             });
 
             // Cleanup
@@ -168,8 +182,9 @@ export class InviteManager extends EventEmitter {
                 this.emit("invite:connected", {
                   code,
                   peerAgentId: msg.agent_id,
+                  sharedNamespace: msg.shared_namespace,
                 });
-                resolve({ success: true, peerAgentId: msg.agent_id });
+                resolve({ success: true, peerAgentId: msg.agent_id, sharedNamespace: msg.shared_namespace });
               } else {
                 resolve({ success: false, error: msg.error });
               }

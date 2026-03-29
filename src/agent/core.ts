@@ -322,6 +322,11 @@ export class InvoiceAgent extends EventEmitter {
     };
   }
 
+  /** Join an additional P2P namespace */
+  joinNamespace(namespace: string): void {
+    this.swarm.joinNamespace(namespace);
+  }
+
   /** Send a file to a connected peer */
   sendFile(targetAgentId: AgentId, filePath: string): { success: boolean; error?: string } {
     if (!existsSync(filePath)) return { success: false, error: "File not found" };

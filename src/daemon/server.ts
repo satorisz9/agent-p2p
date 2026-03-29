@@ -352,11 +352,19 @@ async function main() {
   await agent.start();
   const inviteManager = new InviteManager(config.agentId);
 
-  inviteManager.on("invite:accepted", ({ code, peerAgentId }: any) => {
+  inviteManager.on("invite:accepted", ({ code, peerAgentId, sharedNamespace }: any) => {
     console.error(`[Invite] Peer connected via invite ${code}: ${peerAgentId}`);
+    if (sharedNamespace) {
+      agent.joinNamespace(sharedNamespace);
+      console.error(`[Invite] Joined shared namespace: ${sharedNamespace.slice(0, 16)}...`);
+    }
   });
-  inviteManager.on("invite:connected", ({ code, peerAgentId }: any) => {
+  inviteManager.on("invite:connected", ({ code, peerAgentId, sharedNamespace }: any) => {
     console.error(`[Invite] Connected to peer via invite ${code}: ${peerAgentId}`);
+    if (sharedNamespace) {
+      agent.joinNamespace(sharedNamespace);
+      console.error(`[Invite] Joined shared namespace: ${sharedNamespace.slice(0, 16)}...`);
+    }
   });
 
   // Load or create API auth token

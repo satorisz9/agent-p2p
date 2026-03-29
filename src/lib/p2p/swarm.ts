@@ -158,6 +158,13 @@ export class P2PSwarm extends EventEmitter {
     );
   }
 
+  /** Join an additional namespace topic */
+  joinNamespace(namespace: string): void {
+    const topic = createHash("sha256").update(`agent-p2p:${namespace}`).digest();
+    this.swarm.join(topic, { server: true, client: true });
+    console.error(`[P2P] Joined additional namespace: ${namespace.slice(0, 16)}...`);
+  }
+
   /** Send to a specific agent. Returns false if not connected (queued). */
   sendMessage(targetAgentId: AgentId, message: SignedMessage): boolean {
     for (const peer of this.peers.values()) {
