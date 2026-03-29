@@ -556,10 +556,8 @@ async function main() {
         (agent as any).swarm.sendTaskMessage(from, "task_reject", { task_id: payload.task_id, reason: "Not permitted" });
         return;
       }
-      // Store incoming task
-      const task = taskManager.createTask(from, payload);
-      task.from = from;
-      task.to = config.agentId;
+      // Store incoming task (preserve original task_id)
+      const task = taskManager.storeIncoming(from, payload);
       if (perm.needsApproval) {
         console.error(`[Task] Task ${task.task_id} needs approval`);
         taskManager.emit("task:approval_needed", task);

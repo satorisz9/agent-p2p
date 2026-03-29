@@ -82,6 +82,21 @@ export class TaskManager extends EventEmitter {
 
   // --- Task lifecycle ---
 
+  /** Store a task received from a peer (preserves original task_id) */
+  storeIncoming(from: AgentId, request: TaskRequest): TrackedTask {
+    const task: TrackedTask = {
+      task_id: request.task_id,
+      from,
+      to: this.agentId,
+      request,
+      status: "pending",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+    this.tasks.set(task.task_id, task);
+    return task;
+  }
+
   createTask(to: AgentId, request: Omit<TaskRequest, "task_id">): TrackedTask {
     const task: TrackedTask = {
       task_id: `task_${randomUUID()}`,
