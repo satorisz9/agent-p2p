@@ -2,6 +2,24 @@ const API = '';
 const listEl = document.getElementById('agent-list');
 const searchEl = document.getElementById('search');
 
+function addCopyButtons(container) {
+  container.querySelectorAll('pre:not(.has-copy)').forEach(pre => {
+    pre.classList.add('has-copy');
+    pre.style.position = 'relative';
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = '\u2398';
+    btn.title = 'Copy';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(pre.querySelector('code').textContent);
+      btn.textContent = '\u2713';
+      setTimeout(() => btn.textContent = '\u2398', 1500);
+    };
+    pre.appendChild(btn);
+  });
+}
+
 let debounceTimer = null;
 
 async function fetchAgents(query) {
@@ -45,6 +63,8 @@ function renderAgents(agents) {
       </div>
     `;
   }).join('');
+
+  setTimeout(() => addCopyButtons(listEl), 0);
 }
 
 function toggleForm(card, event) {
