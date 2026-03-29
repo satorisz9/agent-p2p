@@ -25,6 +25,9 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from "http";
+import { randomBytes } from "crypto";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { join } from "path";
 import { InvoiceAgent } from "../agent/core";
 import type { AgentId, OrgId, InvoiceIssuePayload } from "../types/protocol";
 import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
@@ -68,7 +71,31 @@ function json(res: ServerResponse, status: number, data: unknown) {
   res.end(JSON.stringify(data));
 }
 
-function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager) {
+// --- API Token management ---
+
+function loadOrCreateApiToken(dataDir: string): string {
+  mkdirSync(dataDir, { recursive: true });
+  const tokenFile = join(dataDir, "api-token");
+
+  if (existsSync(tokenFile)) {
+    const token = readFileSync(tokenFile, "utf8").trim();
+    if (token.length > 0) return token;
+  }
+
+  const token = randomBytes(32).toString("hex");
+  writeFileSync(tokenFile, token, { mode: 0o600 });
+  return token;
+}
+
+function checkBearerAuth(req: IncomingMessage, expectedToken: string): boolean {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader) return false;
+  const parts = authHeader.split(" ");
+  if (parts.length !== 2 || parts[0] !== "Bearer") return false;
+  return parts[1] === expectedToken;
+}
+
+function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager, apiToken: string) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
     const remoteAddr = req.socket.remoteAddress;
@@ -79,6 +106,22 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
 
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const path = url.pathname;
+
+    // Allow /health without auth (for monitoring)
+    if (req.method === "GET" && path === "/health") {
+      json(res, 200, {
+        status: "ok",
+        agent_id: agent.getAgentInfo().agent_id,
+        uptime: process.uptime(),
+      });
+      return;
+    }
+
+    // Require Bearer token for all other endpoints
+    if (!checkBearerAuth(req, apiToken)) {
+      json(res, 401, { error: "Unauthorized — include Authorization: Bearer <token> header" });
+      return;
+    }
 
     try {
       // --- Routes ---
@@ -173,15 +216,6 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
 
       if (req.method === "GET" && path === "/invite/pending") {
         json(res, 200, { invites: inviteManager.listPending() });
-        return;
-      }
-
-      if (req.method === "GET" && path === "/health") {
-        json(res, 200, {
-          status: "ok",
-          agent_id: agent.getAgentInfo().agent_id,
-          uptime: process.uptime(),
-        });
         return;
       }
 
@@ -298,7 +332,12 @@ async function main() {
     console.error(`[Invite] Connected to peer via invite ${code}: ${peerAgentId}`);
   });
 
-  const httpServer = createDaemonApi(agent, config.port, inviteManager);
+  // Load or create API auth token
+  const apiToken = loadOrCreateApiToken(config.dataDir);
+  console.error(`[Daemon] API token: ${apiToken}`);
+  console.error(`[Daemon] Token file: ${join(config.dataDir, "api-token")}`);
+
+  const httpServer = createDaemonApi(agent, config.port, inviteManager, apiToken);
 
   // Discovery site integration
   let discovery: DiscoveryClient | null = null;

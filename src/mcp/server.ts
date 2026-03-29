@@ -19,6 +19,8 @@
  *     --daemon-url http://127.0.0.1:7701
  */
 
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -37,19 +39,56 @@ function getDaemonUrl(): string {
   return process.env.AGENT_DAEMON_URL ?? "http://127.0.0.1:7700";
 }
 
+function getDataDir(): string {
+  const args = process.argv.slice(2);
+  const idx = args.indexOf("--data-dir");
+  if (idx !== -1 && idx + 1 < args.length) return args[idx + 1];
+  return process.env.AGENT_DATA_DIR ?? "";
+}
+
+function loadApiToken(): string | null {
+  // Explicit token via env or CLI
+  if (process.env.AGENT_API_TOKEN) return process.env.AGENT_API_TOKEN;
+  const args = process.argv.slice(2);
+  const idx = args.indexOf("--api-token");
+  if (idx !== -1 && idx + 1 < args.length) return args[idx + 1];
+
+  // Try reading from data dir
+  const dataDir = getDataDir();
+  if (dataDir) {
+    const tokenFile = join(dataDir, "api-token");
+    if (existsSync(tokenFile)) {
+      return readFileSync(tokenFile, "utf8").trim();
+    }
+  }
+
+  return null;
+}
+
 const DAEMON_URL = getDaemonUrl();
+const API_TOKEN = loadApiToken();
 
 // --- Daemon HTTP client ---
 
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (API_TOKEN) {
+    headers["Authorization"] = `Bearer ${API_TOKEN}`;
+  }
+  return headers;
+}
+
 async function daemonGet(path: string): Promise<unknown> {
-  const res = await fetch(`${DAEMON_URL}${path}`);
+  const res = await fetch(`${DAEMON_URL}${path}`, {
+    headers: authHeaders(),
+  });
   return res.json();
 }
 
 async function daemonPost(path: string, body: unknown): Promise<unknown> {
   const res = await fetch(`${DAEMON_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   return res.json();

@@ -47,6 +47,52 @@ function verifySignedRequest(body: Record<string, unknown>, publicKey: string): 
   }
 }
 
+// --- Rate limiting ---
+
+async function checkRateLimit(env: Env, ip: string, endpoint: string, maxPerHour: number): Promise<boolean> {
+  // Clean up old entries (older than 1 hour)
+  await env.DB.prepare(
+    "DELETE FROM rate_limits WHERE created_at < datetime('now', '-1 hour')"
+  ).run();
+
+  // Count recent requests
+  const result = await env.DB.prepare(
+    "SELECT COUNT(*) as cnt FROM rate_limits WHERE ip = ? AND endpoint = ? AND created_at > datetime('now', '-1 hour')"
+  ).bind(ip, endpoint).first<{ cnt: number }>();
+
+  if (result && result.cnt >= maxPerHour) return false;
+
+  // Record this request
+  await env.DB.prepare(
+    'INSERT INTO rate_limits (ip, endpoint) VALUES (?, ?)'
+  ).bind(ip, endpoint).run();
+
+  return true;
+}
+
+// --- Nonce uniqueness ---
+
+async function checkAndStoreNonce(env: Env, nonce: string): Promise<boolean> {
+  // Clean up nonces older than 10 minutes
+  await env.DB.prepare(
+    "DELETE FROM used_nonces WHERE created_at < datetime('now', '-10 minutes')"
+  ).run();
+
+  // Check if nonce was already used
+  const existing = await env.DB.prepare(
+    'SELECT nonce FROM used_nonces WHERE nonce = ?'
+  ).bind(nonce).first();
+
+  if (existing) return false;
+
+  // Store the nonce
+  await env.DB.prepare(
+    'INSERT INTO used_nonces (nonce) VALUES (?)'
+  ).bind(nonce).run();
+
+  return true;
+}
+
 export const onRequest: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
 
@@ -63,10 +109,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
+  const clientIp = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
 
   try {
     // POST /api/register
     if (method === 'POST' && path === '/api/register') {
+      if (!await checkRateLimit(env, clientIp, 'register', 5)) {
+        return err('Rate limit exceeded — max 5 registrations per hour', 429);
+      }
+
       const body = await request.json() as Record<string, unknown>;
       const agentId = body.agent_id as string;
       if (!agentId || !/^agent:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$/.test(agentId)) {
@@ -80,6 +131,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       const key = existing ? existing.public_key : body.public_key as string;
       if (!verifySignedRequest(body, key)) return err('Invalid signature', 401);
+
+      // Nonce replay protection
+      const nonce = body.nonce as string;
+      if (nonce && !await checkAndStoreNonce(env, nonce)) {
+        return err('Nonce already used — possible replay attack', 401);
+      }
 
       const caps = JSON.stringify((body.capabilities as string[]) || []);
       await env.DB.prepare(`
@@ -107,6 +164,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       ).bind(agentId).first<{ public_key: string }>();
       if (!existing) return err('Agent not found', 404);
       if (!verifySignedRequest(body, existing.public_key)) return err('Invalid signature', 401);
+
+      // Nonce replay protection
+      const delNonce = body.nonce as string;
+      if (delNonce && !await checkAndStoreNonce(env, delNonce)) {
+        return err('Nonce already used — possible replay attack', 401);
+      }
 
       await env.DB.prepare('DELETE FROM public_agents WHERE agent_id = ?').bind(agentId).run();
       return json({ deleted: true });
@@ -143,6 +206,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
     // POST /api/connect
     if (method === 'POST' && path === '/api/connect') {
+      if (!await checkRateLimit(env, clientIp, 'connect', 10)) {
+        return err('Rate limit exceeded — max 10 connection requests per hour', 429);
+      }
+
       const body = await request.json() as Record<string, unknown>;
       const targetId = body.target_agent_id as string;
       const fromAgentId = body.from_agent_id as string;
@@ -195,6 +262,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       if (!agent) return err('Agent not found', 404);
       if (!verifySignedRequest(body, agent.public_key)) return err('Invalid signature', 401);
 
+      // Nonce replay protection
+      const ackNonce = body.nonce as string;
+      if (ackNonce && !await checkAndStoreNonce(env, ackNonce)) {
+        return err('Nonce already used — possible replay attack', 401);
+      }
+
       await env.DB.prepare(
         'UPDATE connection_requests SET status = ? WHERE id = ?'
       ).bind(action === 'accept' ? 'accepted' : 'rejected', requestId).run();
@@ -205,6 +278,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     // POST /api/connect/:agentId/poll (poll for pending requests)
     const pollMatch = path.match(/^\/api\/connect\/([^/]+)\/poll$/);
     if (method === 'POST' && pollMatch) {
+      if (!await checkRateLimit(env, clientIp, 'poll', 60)) {
+        return err('Rate limit exceeded — max 60 polls per hour (1/min)', 429);
+      }
+
       const agentId = decodeURIComponent(pollMatch[1]);
       const body = await request.json() as Record<string, unknown>;
 
@@ -213,6 +290,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       ).bind(agentId).first<{ public_key: string }>();
       if (!agent) return err('Agent not found', 404);
       if (!verifySignedRequest(body, agent.public_key)) return err('Invalid signature', 401);
+
+      // Nonce replay protection
+      const pollNonce = body.nonce as string;
+      if (pollNonce && !await checkAndStoreNonce(env, pollNonce)) {
+        return err('Nonce already used — possible replay attack', 401);
+      }
 
       await env.DB.prepare(
         "DELETE FROM connection_requests WHERE status = 'pending' AND expires_at < datetime('now')"

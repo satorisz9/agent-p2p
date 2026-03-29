@@ -23,3 +23,15 @@ CREATE TABLE IF NOT EXISTS connection_requests (
 
 CREATE INDEX IF NOT EXISTS idx_conn_req_target ON connection_requests(target_agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_public_agents_org ON public_agents(org_id);
+
+CREATE TABLE IF NOT EXISTS rate_limits (
+  ip TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_ip ON rate_limits(ip, endpoint, created_at);
+
+CREATE TABLE IF NOT EXISTS used_nonces (
+  nonce TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

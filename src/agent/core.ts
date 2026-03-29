@@ -21,6 +21,12 @@ import {
   type KeyPair,
 } from "../lib/crypto/keys";
 import { computePayloadHash, signEnvelope, verifyEnvelope } from "../lib/crypto/signing";
+import {
+  encryptPrivateKey,
+  decryptPrivateKey,
+  getPassphrase,
+  type EncryptedKey,
+} from "../lib/crypto/keystore";
 import { validatePayload } from "../lib/validation/schemas";
 import { validateBusinessRules } from "../lib/validation/business";
 import { transition } from "../lib/state/machine";
@@ -43,7 +49,8 @@ interface AgentState {
   orgId: OrgId;
   keyId: string;
   publicKey: string; // base64
-  privateKey: string; // base64 (encrypted in production!)
+  privateKey: string; // base64 (plaintext fallback, cleared when encrypted)
+  encryptedPrivateKey?: EncryptedKey; // AES-256-GCM encrypted private key
   namespace: string;
   invoices: Record<
     string,
@@ -525,9 +532,39 @@ export class InvoiceAgent extends EventEmitter {
   }
 
   private loadOrCreateState(): void {
+    const passphrase = getPassphrase();
+
     if (existsSync(this.stateFile)) {
       const raw = readFileSync(this.stateFile, "utf8");
       this.state = JSON.parse(raw);
+
+      // Decrypt private key if encrypted
+      if (this.state.encryptedPrivateKey) {
+        if (!passphrase) {
+          console.error(
+            `[Agent] ERROR: State file has encrypted private key but no passphrase provided.`
+          );
+          console.error(
+            `[Agent] Set AGENT_P2P_PASSPHRASE env var or pass --passphrase <value>`
+          );
+          process.exit(1);
+        }
+        try {
+          this.state.privateKey = decryptPrivateKey(this.state.encryptedPrivateKey, passphrase);
+        } catch (e) {
+          console.error(`[Agent] ERROR: Failed to decrypt private key — wrong passphrase?`);
+          process.exit(1);
+        }
+      } else if (passphrase) {
+        // Existing plaintext state + passphrase provided: encrypt and re-save
+        console.error(`[Agent] Encrypting existing plaintext private key...`);
+        this.saveState();
+      } else {
+        console.error(
+          `[Agent] WARNING: Private key stored in plaintext. Set AGENT_P2P_PASSPHRASE to encrypt.`
+        );
+      }
+
       console.error(`[Agent] Loaded state from ${this.stateFile}`);
       return;
     }
@@ -548,11 +585,31 @@ export class InvoiceAgent extends EventEmitter {
       knownPeers: {},
       auditLog: [],
     };
+
+    if (!passphrase) {
+      console.error(
+        `[Agent] WARNING: No passphrase set — private key will be stored in plaintext.`
+      );
+      console.error(
+        `[Agent] Set AGENT_P2P_PASSPHRASE env var or pass --passphrase <value> to encrypt.`
+      );
+    }
+
     this.saveState();
     console.error(`[Agent] Created new agent state at ${this.stateFile}`);
   }
 
   private saveState(): void {
-    writeFileSync(this.stateFile, JSON.stringify(this.state, null, 2));
+    const passphrase = getPassphrase();
+    const stateToWrite = { ...this.state };
+
+    if (passphrase) {
+      // Encrypt the private key before writing
+      stateToWrite.encryptedPrivateKey = encryptPrivateKey(stateToWrite.privateKey, passphrase);
+      // Remove plaintext private key from the persisted file
+      stateToWrite.privateKey = "";
+    }
+
+    writeFileSync(this.stateFile, JSON.stringify(stateToWrite, null, 2));
   }
 }
