@@ -117,6 +117,16 @@ export class InvoiceAgent extends EventEmitter {
       this.handleIncomingMessage(event.message, event.from);
     });
 
+    // Handle incoming file transfers
+    this.swarm.on("file", (event: any) => {
+      const outDir = join(this.config.dataDir, "received");
+      mkdirSync(outDir, { recursive: true });
+      const filePath = join(outDir, event.filename);
+      writeFileSync(filePath, Buffer.from(event.data, "base64"));
+      console.error(`[Agent] Received file: ${event.filename} (${event.size} bytes) from ${event.from} → ${filePath}`);
+      this.emit("file:received", { from: event.from, filename: event.filename, path: filePath, size: event.size });
+    });
+
     this.swarm.on("peer:identified", (peer: any) => {
       // Register peer's swarm public key
       if (peer.agentId) {
@@ -310,6 +320,26 @@ export class InvoiceAgent extends EventEmitter {
       inbox_count: this.state.inbox.length,
       invoice_count: Object.keys(this.state.invoices).length,
     };
+  }
+
+  /** Send a file to a connected peer */
+  sendFile(targetAgentId: AgentId, filePath: string): { success: boolean; error?: string } {
+    if (!existsSync(filePath)) return { success: false, error: "File not found" };
+    const data = readFileSync(filePath);
+    const filename = filePath.split("/").pop() || "file";
+    const ext = filename.split(".").pop()?.toLowerCase() || "";
+    const mimeMap: Record<string, string> = {
+      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+      pdf: "application/pdf", txt: "text/plain", json: "application/json",
+    };
+    const mime = mimeMap[ext] || "application/octet-stream";
+    const sent = this.swarm.sendFile(
+      targetAgentId, filename, data.toString("base64"), data.length, mime
+    );
+    if (sent) {
+      console.error(`[Agent] Sent file: ${filename} (${data.length} bytes) to ${targetAgentId}`);
+    }
+    return { success: sent, error: sent ? undefined : "Peer not connected" };
   }
 
   /** Get the private key (base64) for discovery site signing */

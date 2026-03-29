@@ -182,6 +182,23 @@ export class P2PSwarm extends EventEmitter {
     return false;
   }
 
+  /** Send a file to a specific agent */
+  sendFile(targetAgentId: AgentId, filename: string, data: string, size: number, mime: string): boolean {
+    for (const peer of this.peers.values()) {
+      if (peer.agentId === targetAgentId && peer.connected) {
+        return this.sendRaw(peer.stream, {
+          type: "file_transfer",
+          filename,
+          data,
+          size,
+          mime,
+        });
+      }
+    }
+    console.error(`[P2P] Peer ${targetAgentId} not connected — cannot send file`);
+    return false;
+  }
+
   /** Broadcast to all connected peers */
   broadcast(message: SignedMessage): number {
     let sent = 0;
@@ -285,6 +302,17 @@ export class P2PSwarm extends EventEmitter {
           from: peer.agentId,
           remoteKey,
           message: msg.payload as SignedMessage,
+        });
+        break;
+
+      case "file_transfer":
+        if (!peer.verified) return;
+        this.emit("file", {
+          from: peer.agentId,
+          filename: msg.filename,
+          data: msg.data, // base64
+          size: msg.size,
+          mime: msg.mime,
         });
         break;
 

@@ -189,6 +189,33 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
         return;
       }
 
+      if (req.method === "POST" && path === "/file/send") {
+        const body = JSON.parse(await readBody(req));
+        const result = agent.sendFile(
+          body.target_agent_id as AgentId,
+          body.file_path
+        );
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/file/received") {
+        const { readdirSync, statSync } = await import("fs");
+        const receivedDir = require("path").join(agent.getAgentInfo().agent_id.replace(/:/g, "_"), "received");
+        const dataDir = (agent as any).config?.dataDir || "";
+        const dir = require("path").join(dataDir, "received");
+        try {
+          const files = readdirSync(dir).map(f => ({
+            name: f,
+            size: statSync(require("path").join(dir, f)).size,
+          }));
+          json(res, 200, { files, directory: dir });
+        } catch {
+          json(res, 200, { files: [], directory: dir });
+        }
+        return;
+      }
+
       if (req.method === "GET" && path === "/audit") {
         const invoiceId = url.searchParams.get("invoice_id") ?? undefined;
         json(res, 200, agent.getAuditLog(invoiceId));
