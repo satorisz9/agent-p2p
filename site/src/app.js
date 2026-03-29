@@ -5,7 +5,10 @@ const searchEl = document.getElementById('search');
 function addCopyButtons(container) {
   container.querySelectorAll('pre:not(.has-copy)').forEach(pre => {
     pre.classList.add('has-copy');
-    pre.style.position = 'relative';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-wrapper';
+    pre.parentNode.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
     const btn = document.createElement('button');
     btn.className = 'copy-btn';
     btn.textContent = '\u2398';
@@ -16,7 +19,7 @@ function addCopyButtons(container) {
       btn.textContent = '\u2713';
       setTimeout(() => btn.textContent = '\u2398', 1500);
     };
-    pre.appendChild(btn);
+    wrapper.appendChild(btn);
   });
 }
 
