@@ -253,7 +253,7 @@ async function main() {
       agentId: config.agentId,
       orgId: config.orgId,
       publicKey: agentInfo.public_key,
-      privateKey: (agent as any).state.privateKey, // access internal state for signing
+      privateKey: agent.getPrivateKey(),
       capabilities: ['data.transfer', 'invoice.issue', 'invoice.accept'],
       description: config.description,
     });

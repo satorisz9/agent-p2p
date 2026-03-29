@@ -305,6 +305,11 @@ export class InvoiceAgent extends EventEmitter {
     };
   }
 
+  /** Get the private key (base64) for discovery site signing */
+  getPrivateKey(): string {
+    return this.state.privateKey;
+  }
+
   // ============================================================
   // Internal
   // ============================================================
