@@ -1,0 +1,9 @@
+name = "agent-p2p-discovery"
+compatibility_date = "2024-12-01"
+
+pages_build_output_dir = "src"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "agent-p2p-discovery"
+database_id = "cbdd5052-9ec1-4e8a-86a1-291491f2b0c1"

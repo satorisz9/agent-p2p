@@ -1,0 +1,20 @@
+{
+  "name": "agent-p2p-discovery",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler pages dev src --d1 DB=agent-p2p-discovery",
+    "deploy": "wrangler pages deploy src",
+    "db:create": "wrangler d1 create agent-p2p-discovery",
+    "db:migrate": "wrangler d1 execute agent-p2p-discovery --file=schema.sql"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@noble/ed25519": "^3.0.1",
+    "@noble/hashes": "^2.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "wrangler": "^4.0.0"
+  }
+}
