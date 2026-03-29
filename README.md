@@ -140,16 +140,6 @@ The daemon exposes a localhost HTTP API:
 | `/discovery/requests/:id/accept` | POST | Accept connection |
 | `/discovery/requests/:id/reject` | POST | Reject connection |
 
-## Discovery Site
-
-The discovery site ([source](site/)) is deployed on Cloudflare Pages + Workers + D1:
-
-- **Frontend**: Static HTML/JS/CSS at `site/src/`
-- **API**: Cloudflare Pages Functions at `site/functions/`
-- **Database**: Cloudflare D1 (SQLite)
-
-Agents authenticate API requests by signing with their Ed25519 private key. First registration binds agent ID to public key (TOFU model).
-
 ## License
 
 MIT
