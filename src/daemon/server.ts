@@ -230,8 +230,9 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
       if (req.method === "POST" && path === "/invite/create") {
         const body = await readBody(req);
         const parsed = body ? JSON.parse(body) : {};
-        const expiresIn = Math.min(Math.max(parsed.expires_in || 600, 60), 86400); // 1min - 24h
-        const invite = await inviteManager.create(expiresIn);
+        const expiresIn = Math.min(Math.max(parsed.expires_in || 600, 60), 86400);
+        const mode = parsed.mode || "restricted";
+        const invite = await inviteManager.create(expiresIn, mode);
         json(res, 200, invite);
         return;
       }
@@ -239,7 +240,7 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
       if (req.method === "POST" && path === "/invite/accept") {
         const body = JSON.parse(await readBody(req));
         if (!body.code) { json(res, 400, { error: "code required" }); return; }
-        const result = await inviteManager.accept(body.code);
+        const result = await inviteManager.accept(body.code, body.mode || "restricted");
         json(res, result.success ? 200 : 400, result);
         return;
       }
@@ -602,22 +603,24 @@ async function main() {
     (agent as any).swarm.broadcastHeartbeat(hb);
   });
 
-  // Auto-set peer config on invite success
-  inviteManager.on("invite:accepted", ({ code, peerAgentId, sharedNamespace }: any) => {
-    console.error(`[Invite] Peer connected via invite ${code}: ${peerAgentId}`);
+  // Auto-set peer config on invite success — each side sets its own mode
+  inviteManager.on("invite:accepted", ({ code, peerAgentId, peerMode, myMode, sharedNamespace }: any) => {
+    console.error(`[Invite] Peer ${peerAgentId} connected via ${code} (my mode: ${myMode}, peer mode: ${peerMode})`);
     if (sharedNamespace) {
       agent.joinNamespace(sharedNamespace);
       console.error(`[Invite] Joined shared namespace: ${sharedNamespace.slice(0, 16)}...`);
     }
-    taskManager.setPeerConfig(peerAgentId, "restricted", sharedNamespace);
+    // Set what THIS peer is allowed to do on OUR side (their mode toward us)
+    taskManager.setPeerConfig(peerAgentId, peerMode || "restricted", sharedNamespace);
   });
-  inviteManager.on("invite:connected", ({ code, peerAgentId, sharedNamespace }: any) => {
-    console.error(`[Invite] Connected to peer via invite ${code}: ${peerAgentId}`);
+  inviteManager.on("invite:connected", ({ code, peerAgentId, peerMode, myMode, sharedNamespace }: any) => {
+    console.error(`[Invite] Connected to ${peerAgentId} via ${code} (my mode: ${myMode}, peer mode: ${peerMode})`);
     if (sharedNamespace) {
       agent.joinNamespace(sharedNamespace);
       console.error(`[Invite] Joined shared namespace: ${sharedNamespace.slice(0, 16)}...`);
     }
-    taskManager.setPeerConfig(peerAgentId, "restricted", sharedNamespace);
+    // Set what THIS peer is allowed to do on OUR side (their mode toward us)
+    taskManager.setPeerConfig(peerAgentId, peerMode || "restricted", sharedNamespace);
   });
 
   // Load or create API auth token

@@ -15,8 +15,11 @@ import { createHash, randomBytes } from "crypto";
 import { EventEmitter } from "events";
 import type { AgentId } from "../../types/protocol";
 
+export type ConnectionMode = "open" | "restricted" | "readonly";
+
 export interface Invite {
   code: string;
+  mode: ConnectionMode;
   createdAt: number;
   expiresAt: number;
 }
@@ -24,6 +27,7 @@ export interface Invite {
 export interface InviteResult {
   success: boolean;
   peerAgentId?: string;
+  peerMode?: ConnectionMode;
   sharedNamespace?: string;
   error?: string;
 }
@@ -61,11 +65,12 @@ export class InviteManager extends EventEmitter {
   }
 
   /** Create an invite code. Joins temp topic and waits for acceptor. */
-  async create(expiresInSec = 600): Promise<Invite> {
+  async create(expiresInSec = 600, mode: ConnectionMode = "restricted"): Promise<Invite> {
     const code = generateCode();
     const now = Date.now();
     const invite: Invite = {
       code,
+      mode,
       createdAt: now,
       expiresAt: now + expiresInSec * 1000,
     };
@@ -100,18 +105,21 @@ export class InviteManager extends EventEmitter {
             // Derive shared namespace from invite code + both agent IDs
             const sharedNs = deriveSharedNamespace(code, this.agentId, msg.agent_id);
 
-            // Send confirmation with our agent ID + shared namespace
+            // Send confirmation with our agent ID + shared namespace + our mode
             this.sendJson(socket, {
               type: "invite_result",
               success: true,
               agent_id: this.agentId,
               shared_namespace: sharedNs,
+              mode: inv.mode,
             });
 
-            // Emit event with shared namespace
+            // Emit event with shared namespace + both modes
             this.emit("invite:accepted", {
               code,
               peerAgentId: msg.agent_id,
+              peerMode: msg.mode || "restricted",
+              myMode: inv.mode,
               sharedNamespace: sharedNs,
             });
 
@@ -141,7 +149,7 @@ export class InviteManager extends EventEmitter {
   }
 
   /** Accept an invite code. Joins temp topic, sends code, waits for confirmation. */
-  async accept(code: string, timeoutMs = 30_000): Promise<InviteResult> {
+  async accept(code: string, mode: ConnectionMode = "restricted", timeoutMs = 30_000): Promise<InviteResult> {
     return new Promise(async (resolve) => {
       const topic = topicFromCode(code);
       const swarm = new Hyperswarm();
@@ -159,11 +167,12 @@ export class InviteManager extends EventEmitter {
       swarm.on("connection", (socket: any) => {
         socket.on("error", () => {}); // Suppress ECONNRESET on cleanup
 
-        // Send our accept message
+        // Send our accept message with our mode preference
         this.sendJson(socket, {
           type: "invite_accept",
           code,
           agent_id: this.agentId,
+          mode,
         });
 
         let buffer = Buffer.alloc(0);
@@ -185,9 +194,11 @@ export class InviteManager extends EventEmitter {
                 this.emit("invite:connected", {
                   code,
                   peerAgentId: msg.agent_id,
+                  peerMode: msg.mode || "restricted",
+                  myMode: mode,
                   sharedNamespace: msg.shared_namespace,
                 });
-                resolve({ success: true, peerAgentId: msg.agent_id, sharedNamespace: msg.shared_namespace });
+                resolve({ success: true, peerAgentId: msg.agent_id, peerMode: msg.mode, sharedNamespace: msg.shared_namespace });
               } else {
                 resolve({ success: false, error: msg.error });
               }
