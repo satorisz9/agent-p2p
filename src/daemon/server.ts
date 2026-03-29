@@ -547,6 +547,14 @@ async function main() {
   const inviteManager = new InviteManager(config.agentId);
   const taskManager = new TaskManager(config.agentId, ["generic", "code_review", "run_tests", "transform"], 5);
 
+  // Auto-set default peer config when a peer connects (if not already set via invite)
+  (agent as any).swarm.on("peer:identified", (peer: any) => {
+    if (peer.agentId && !taskManager.getPeerConfig(peer.agentId)) {
+      taskManager.setPeerConfig(peer.agentId, "restricted");
+      console.error(`[Daemon] Auto-configured peer ${peer.agentId} as restricted`);
+    }
+  });
+
   // Wire up P2P task/heartbeat events to task manager
   (agent as any).swarm.on("task", ({ from, type, payload }: any) => {
     console.error(`[Task] ${type} from ${from}: ${payload.task_id || ""}`);
