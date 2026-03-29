@@ -294,10 +294,10 @@ pre code {
   background: var(--border);
   border: none;
   color: var(--text-muted);
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 1.25rem;
   line-height: 1;
   transition: color 0.2s, background 0.2s;
 }
