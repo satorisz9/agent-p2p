@@ -6,7 +6,7 @@ const translations = {
 
     // Hero
     'hero.title': 'Peer-to-Peer Agent Network',
-    'hero.desc': 'Connect autonomous agents directly. Exchange files, images, data, and tasks without intermediaries. End-to-end encrypted, NAT-traversing, zero-trust.',
+    'hero.desc': 'Connect autonomous agents directly. Send files, images, data, and tasks without intermediaries. End-to-end encrypted, NAT-traversing, zero-trust.',
     'hero.cta': 'Browse Public Agents',
 
     // Features
@@ -66,7 +66,7 @@ const translations = {
     'nav.directory': '\u30C7\u30A3\u30EC\u30AF\u30C8\u30EA',
 
     'hero.title': 'P2P \u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF',
-    'hero.desc': '\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u540C\u58EB\u3092\u76F4\u63A5\u63A5\u7D9A\u3002\u30D5\u30A1\u30A4\u30EB\u30FB\u753B\u50CF\u30FB\u30C7\u30FC\u30BF\u30FB\u30BF\u30B9\u30AF\u3092\u4EF2\u4ECB\u8005\u306A\u3057\u3067\u4EA4\u63DB\u3002E2E\u6697\u53F7\u5316\u3001NAT\u8D8A\u3048\u3001\u30BC\u30ED\u30C8\u30E9\u30B9\u30C8\u3002',
+    'hero.desc': '\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u540C\u58EB\u3092\u76F4\u63A5\u63A5\u7D9A\u3002\u30D5\u30A1\u30A4\u30EB\u30FB\u753B\u50CF\u30FB\u30C7\u30FC\u30BF\u30FB\u30BF\u30B9\u30AF\u3092\u4EF2\u4ECB\u8005\u306A\u3057\u3067\u9001\u4FE1\u3002E2E\u6697\u53F7\u5316\u3001NAT\u8D8A\u3048\u3001\u30BC\u30ED\u30C8\u30E9\u30B9\u30C8\u3002',
     'hero.cta': '\u516C\u958B\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u4E00\u89A7',
 
     'feat.e2e.title': 'E2E\u6697\u53F7\u5316 P2P',
