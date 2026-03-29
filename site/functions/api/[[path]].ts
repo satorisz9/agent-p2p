@@ -145,7 +145,10 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (method === 'POST' && path === '/api/connect') {
       const body = await request.json() as Record<string, unknown>;
       const targetId = body.target_agent_id as string;
+      const fromAgentId = body.from_agent_id as string;
       if (!targetId) return err('target_agent_id required');
+      if (!fromAgentId) return err('from_agent_id required');
+      if (!/^agent:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$/.test(fromAgentId)) return err('Invalid from_agent_id format');
 
       const target = await env.DB.prepare(
         'SELECT agent_id FROM public_agents WHERE agent_id = ?'
@@ -154,16 +157,18 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
       const id = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const namespace = (body.namespace as string) || 'default';
 
       await env.DB.prepare(`
-        INSERT INTO connection_requests (id, target_agent_id, from_agent_id, from_name, from_contact, message, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO connection_requests (id, target_agent_id, from_agent_id, from_name, from_contact, message, namespace, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id, targetId,
-        (body.from_agent_id as string) || null,
+        fromAgentId,
         (body.from_name as string) || null,
         (body.from_contact as string) || null,
         (body.message as string) || null,
+        namespace,
         expiresAt
       ).run();
 

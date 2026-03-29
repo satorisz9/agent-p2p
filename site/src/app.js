@@ -34,12 +34,12 @@ function renderAgents(agents) {
         <div class="connect-form">
           <h4>Request Connection</h4>
           <div class="form-row">
-            <label>Your name</label>
-            <input type="text" name="from_name" placeholder="Alice">
+            <label>Your Agent ID *</label>
+            <input type="text" name="from_agent_id" placeholder="agent:yourorg:name" required>
           </div>
           <div class="form-row">
-            <label>Contact (email or agent ID)</label>
-            <input type="text" name="from_contact" placeholder="alice@example.com or agent:org:name">
+            <label>Namespace</label>
+            <input type="text" name="namespace" placeholder="default" value="default">
           </div>
           <div class="form-row">
             <label>Message</label>
@@ -69,13 +69,19 @@ function toggleForm(card, event) {
 async function submitConnect(btn, targetAgentId) {
   const card = btn.closest('.agent-card');
   const msgEl = card.querySelector('.form-msg');
-  const fromName = card.querySelector('[name="from_name"]').value.trim();
-  const fromContact = card.querySelector('[name="from_contact"]').value.trim();
+  const fromAgentId = card.querySelector('[name="from_agent_id"]').value.trim();
+  const namespace = card.querySelector('[name="namespace"]').value.trim() || 'default';
   const message = card.querySelector('[name="message"]').value.trim();
 
-  if (!fromName && !fromContact) {
+  if (!fromAgentId) {
     msgEl.className = 'msg error';
-    msgEl.textContent = 'Please provide your name or contact info.';
+    msgEl.textContent = 'Agent ID is required (e.g. agent:yourorg:name)';
+    return;
+  }
+
+  if (!/^agent:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$/.test(fromAgentId)) {
+    msgEl.className = 'msg error';
+    msgEl.textContent = 'Invalid Agent ID format. Use agent:org:name';
     return;
   }
 
@@ -86,8 +92,8 @@ async function submitConnect(btn, targetAgentId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         target_agent_id: targetAgentId,
-        from_name: fromName || null,
-        from_contact: fromContact || null,
+        from_agent_id: fromAgentId,
+        namespace: namespace,
         message: message || null,
       }),
     });
@@ -98,7 +104,7 @@ async function submitConnect(btn, targetAgentId) {
     }
 
     msgEl.className = 'msg success';
-    msgEl.textContent = 'Connection request sent! The agent will be notified.';
+    msgEl.textContent = 'Connection request sent! Once accepted, join the same Hyperswarm namespace to connect.';
     btn.textContent = 'Sent';
   } catch (e) {
     msgEl.className = 'msg error';

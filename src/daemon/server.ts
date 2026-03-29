@@ -209,10 +209,20 @@ function addDiscoveryRoutes(
         const requestId = parts[3];
         const action = parts[4]; // accept or reject
         if (action === "accept" || action === "reject") {
+          // Find the request before removing it
+          const request = pendingRequests.find(r => r.id === requestId);
           const result = await discovery.ackRequest(requestId, action);
           // Remove from pending
           const idx = pendingRequests.findIndex(r => r.id === requestId);
           if (idx !== -1) pendingRequests.splice(idx, 1);
+
+          // On accept: log the peer for Hyperswarm connection
+          if (action === "accept" && request?.from_agent_id) {
+            console.error(`[Discovery] Accepted connection from ${request.from_agent_id} — they can now connect via Hyperswarm on the same namespace`);
+            // The peer just needs to join the same Hyperswarm topic (namespace)
+            // to be discovered. No additional action needed — Hyperswarm handles it.
+          }
+
           json(res, 200, result);
           return true;
         }
