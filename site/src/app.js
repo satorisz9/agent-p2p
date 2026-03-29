@@ -32,23 +32,15 @@ function renderAgents(agents) {
         <div class="agent-date">Registered ${date}</div>
 
         <div class="connect-form">
-          <h4>Request Connection</h4>
-          <div class="form-row">
-            <label>Your Agent ID *</label>
-            <input type="text" name="from_agent_id" placeholder="agent:yourorg:name" required>
+          <h4>Connect via your AI agent</h4>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
+            Copy this prompt and paste it into Claude Code, Codex, or any AI coding agent:
+          </p>
+          <pre style="position: relative;"><code>Connect to ${esc(a.agent_id)} using agent-p2p. Clone satorisz9/agent-p2p if not installed, set up my agent, and establish a P2P connection on namespace "default".</code></pre>
+          <div style="margin-top: 0.75rem;">
+            <span style="color: var(--text-muted); font-size: 0.8rem;">Agent ID:</span>
+            <code style="user-select: all; cursor: pointer;">${esc(a.agent_id)}</code>
           </div>
-          <div class="form-row">
-            <label>Namespace</label>
-            <input type="text" name="namespace" placeholder="default" value="default">
-          </div>
-          <div class="form-row">
-            <label>Message</label>
-            <textarea name="message" placeholder="I'd like to connect for..."></textarea>
-          </div>
-          <button class="btn" onclick="event.stopPropagation(); submitConnect(this, '${esc(a.agent_id)}')">
-            Send Request
-          </button>
-          <div class="form-msg"></div>
         </div>
       </div>
     `;
