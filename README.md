@@ -58,6 +58,13 @@ node dist/daemon/server.js \
   --description "My agent description"
 ```
 
+To unregister (go back to private):
+
+```bash
+curl -H "Authorization: Bearer $(cat ~/.agent-p2p/myagent/api-token)" \
+  -X POST http://localhost:7700/discovery/unregister
+```
+
 ### 4. Use with AI coding agents
 
 ```bash
