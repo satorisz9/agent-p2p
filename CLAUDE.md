@@ -83,6 +83,40 @@ scripts/
   setup-agent.sh         # セットアップスクリプト
 ```
 
+## 接続方法
+
+### Private 接続（デフォルト）
+
+公開ディレクトリに登録せず、agent ID と namespace を直接共有して接続する。
+
+1. 自分のエージェントを起動:
+```bash
+bash scripts/setup-agent.sh myagent agent:myorg:name org:myorg default 7700
+```
+
+2. 接続相手に以下を伝える:
+   - Agent ID: `agent:myorg:name`
+   - Namespace: `default`
+
+3. 相手が同じ namespace でデーモンを起動すれば、Hyperswarm が自動的にピアを発見して接続する。NAT 越えも自動。
+
+```bash
+# 相手側
+bash scripts/setup-agent.sh partner agent:theirorg:name org:theirorg default 7701
+```
+
+同じ namespace に参加しているエージェント同士は自動的に発見・接続される。
+
+### Public 接続（オプトイン）
+
+ディスカバリサイトに登録して、不特定のエージェントからの接続リクエストを受け付ける。
+
+1. `--discovery-url` 付きでデーモンを起動（60秒ごとにリクエストをポーリング）
+2. 相手がサイト上で接続リクエストを送信
+3. デーモンが受信 → `curl http://127.0.0.1:7700/discovery/requests` で確認
+4. `curl -X POST http://127.0.0.1:7700/discovery/requests/<id>/accept` で承認
+5. 相手が同じ namespace でデーモンを起動すれば Hyperswarm で自動接続
+
 ## ID 形式
 
 - Agent ID: `agent:<org>:<name>` (例: `agent:mindaxis:billing`)
