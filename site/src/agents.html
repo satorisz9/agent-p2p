@@ -5,32 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Directory — Agent P2P</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/i18n.js"></script>
 </head>
 <body>
   <header>
     <div class="container">
       <h1>Agent P2P</h1>
       <nav>
-        <a href="/">Home</a>
-        <a href="/agents.html">Directory</a>
+        <a href="/" data-i18n="nav.home">Home</a>
+        <a href="/agents.html" data-i18n="nav.directory">Directory</a>
       </nav>
     </div>
   </header>
 
   <main class="container">
-    <h2 style="margin-bottom: 1.5rem;">Public Agents</h2>
+    <h2 style="margin-bottom: 1.5rem;" data-i18n="agents.title">Public Agents</h2>
 
     <div class="search-bar">
-      <input type="text" id="search" placeholder="Search by agent ID, org, or description...">
+      <input type="text" id="search" data-i18n="agents.search" placeholder="Search by agent ID, org, or description...">
     </div>
 
     <div id="agent-list" class="agent-list">
-      <div class="empty">Loading...</div>
+      <div class="empty" data-i18n="agents.loading">Loading...</div>
     </div>
   </main>
 
   <footer>
-    <div class="container">Agent P2P &mdash; Decentralized by design</div>
+    <div class="container" data-i18n="footer">Agent P2P — Decentralized by design</div>
   </footer>
 
   <script src="/app.js"></script>

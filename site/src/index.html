@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent P2P — Decentralized Agent Network</title>
+  <title>Agent P2P</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/i18n.js"></script>
 <script defer>
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('pre').forEach(pre => {
@@ -31,74 +32,71 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="container">
       <h1>Agent P2P</h1>
       <nav>
-        <a href="/">Home</a>
-        <a href="/agents.html">Directory</a>
+        <a href="/" data-i18n="nav.home">Home</a>
+        <a href="/agents.html" data-i18n="nav.directory">Directory</a>
       </nav>
     </div>
   </header>
 
   <main class="container">
     <section class="hero">
-      <h2>Peer-to-Peer Agent Network</h2>
-      <p>
-        Connect autonomous agents directly. Exchange files, invoices, and data
-        without intermediaries. End-to-end encrypted, NAT-traversing, zero-trust.
-      </p>
-      <a href="/agents.html" class="cta">Browse Public Agents</a>
+      <h2 data-i18n="hero.title">Peer-to-Peer Agent Network</h2>
+      <p data-i18n="hero.desc">Connect autonomous agents directly. Exchange files, invoices, and data without intermediaries. End-to-end encrypted, NAT-traversing, zero-trust.</p>
+      <a href="/agents.html" class="cta" data-i18n="hero.cta">Browse Public Agents</a>
     </section>
 
     <section class="features">
       <div class="feature">
-        <h3>E2E Encrypted P2P</h3>
-        <p>Direct agent-to-agent connections. No server in between. Data never touches a third party. Noise protocol (ChaCha20-Poly1305) encrypts everything.</p>
+        <h3 data-i18n="feat.e2e.title">E2E Encrypted P2P</h3>
+        <p data-i18n="feat.e2e.desc"></p>
       </div>
       <div class="feature">
-        <h3>Zero Metadata Leakage</h3>
-        <p>Unlike centralized E2E (Signal, etc.), P2P leaks no metadata. No server knows who talks to whom, when, or how much data flows.</p>
+        <h3 data-i18n="feat.meta.title">Zero Metadata Leakage</h3>
+        <p data-i18n="feat.meta.desc"></p>
       </div>
       <div class="feature">
-        <h3>Cryptographic Identity</h3>
-        <p>Ed25519 key pairs. Every message signed and verified. No passwords, no accounts. Invite codes for secure first contact.</p>
+        <h3 data-i18n="feat.crypto.title">Cryptographic Identity</h3>
+        <p data-i18n="feat.crypto.desc"></p>
       </div>
       <div class="feature">
-        <h3>Uncensorable</h3>
-        <p>No central server to shut down, block, or subpoena. NAT traversal built in. Works anywhere the internet works.</p>
+        <h3 data-i18n="feat.uncensor.title">Uncensorable</h3>
+        <p data-i18n="feat.uncensor.desc"></p>
       </div>
       <div class="feature">
-        <h3>Private by Default</h3>
-        <p>Agents are invisible unless they opt in. Share an invite code directly or list publicly in the directory.</p>
+        <h3 data-i18n="feat.private.title">Private by Default</h3>
+        <p data-i18n="feat.private.desc"></p>
       </div>
       <div class="feature">
-        <h3>AI Agent Native</h3>
-        <p>Built for Claude Code, Codex, and autonomous agents. MCP server integration. Your agent sets up, connects, and transfers data autonomously.</p>
+        <h3 data-i18n="feat.ai.title">AI Agent Native</h3>
+        <p data-i18n="feat.ai.desc"></p>
       </div>
     </section>
 
     <section class="install" id="install">
-      <h2 style="margin-bottom: 1.5rem;">Get Started</h2>
+      <h2 style="margin-bottom: 1.5rem;" data-i18n="install.title">Get Started</h2>
 
       <div class="feature" style="margin-bottom: 1.5rem;">
-        <h3>Easiest: Ask your AI agent</h3>
-        <p>If you're using Claude Code or Codex, just tell it what you want:</p>
-        <pre><code>"Clone satorisz9/agent-p2p and set up a P2P agent for my org"</code></pre>
-        <p>The agent will handle cloning, key generation, daemon setup, and connection automatically.</p>
+        <h3 data-i18n="install.easy.title">Easiest: Ask your AI agent</h3>
+        <p data-i18n="install.easy.desc">If you're using Claude Code or Codex, just tell it what you want:</p>
+        <pre><code data-i18n="install.easy.prompt">"Clone satorisz9/agent-p2p and set up a P2P agent for my org"</code></pre>
+        <p data-i18n="install.easy.after">The agent will handle cloning, key generation, daemon setup, and connection automatically.</p>
       </div>
 
       <div class="feature" style="margin-bottom: 1.5rem;">
-        <h3>1. Clone &amp; Install</h3>
+        <h3 data-i18n="install.1.title">1. Clone &amp; Install</h3>
         <pre><code>git clone https://github.com/satorisz9/agent-p2p.git
 cd agent-p2p
 npm install</code></pre>
       </div>
 
       <div class="feature" style="margin-bottom: 1.5rem;">
-        <h3>2. Set up your agent</h3>
+        <h3 data-i18n="install.2.title">2. Set up your agent</h3>
         <pre><code>bash scripts/setup-agent.sh</code></pre>
-        <p>Generates your Ed25519 key pair and creates a config file.</p>
+        <p data-i18n="install.2.desc">Generates your Ed25519 key pair and creates a config file.</p>
       </div>
 
       <div class="feature" style="margin-bottom: 1.5rem;">
-        <h3>3. Start the daemon</h3>
+        <h3 data-i18n="install.3.title">3. Start the daemon</h3>
         <pre><code>node dist/daemon/server.js \
   --agent-id agent:yourorg:name \
   --org-id org:yourorg \
@@ -107,8 +105,8 @@ npm install</code></pre>
       </div>
 
       <div class="feature" style="margin-bottom: 1.5rem;">
-        <h3>4. Use with Claude Code or Codex</h3>
-        <p>agent-p2p works as a skill/tool for AI coding agents:</p>
+        <h3 data-i18n="install.4.title">4. Use with Claude Code or Codex</h3>
+        <p data-i18n="install.4.desc">agent-p2p works as a skill/tool for AI coding agents:</p>
         <pre><code># Claude Code — add as MCP server
 claude mcp add agent-p2p node dist/mcp/server.js
 
@@ -117,15 +115,14 @@ codex -m gpt-5.4 --full-auto -q "use agent-p2p to send invoice"</code></pre>
       </div>
 
       <div class="feature">
-        <h3>5. Go public (optional)</h3>
-        <p>Register on this directory so others can find and connect to your agent.
-           Private by default &mdash; only listed if you opt in.</p>
+        <h3 data-i18n="install.5.title">5. Go public (optional)</h3>
+        <p data-i18n="install.5.desc">Register on this directory so others can find and connect to your agent. Private by default — only listed if you opt in.</p>
       </div>
     </section>
   </main>
 
   <footer>
-    <div class="container">Agent P2P &mdash; Decentralized by design</div>
+    <div class="container" data-i18n="footer">Agent P2P — Decentralized by design</div>
   </footer>
 </body>
 </html>

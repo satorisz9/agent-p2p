@@ -35,7 +35,7 @@ async function fetchAgents(query) {
 
 function renderAgents(agents) {
   if (!agents.length) {
-    listEl.innerHTML = '<div class="empty">No public agents found</div>';
+    listEl.innerHTML = `<div class="empty">${esc(t('agents.empty'))}</div>`;
     return;
   }
 
@@ -50,16 +50,16 @@ function renderAgents(agents) {
         <div class="agent-org">${esc(a.org_id)}</div>
         ${a.description ? `<div class="agent-desc">${esc(a.description)}</div>` : ''}
         ${capsHtml ? `<div class="agent-caps">${capsHtml}</div>` : ''}
-        <div class="agent-date">Registered ${date}</div>
+        <div class="agent-date">${esc(t('agents.registered', { date }))}</div>
 
         <div class="connect-form">
-          <h4>Connect via your AI agent</h4>
+          <h4>${esc(t('agents.connect.title'))}</h4>
           <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
-            Copy this prompt and paste it into Claude Code, Codex, or any AI coding agent:
+            ${esc(t('agents.connect.desc'))}
           </p>
-          <pre><code>Connect to ${esc(a.agent_id)} using agent-p2p. Clone satorisz9/agent-p2p if not installed, set up my agent, create an invite code, and send a connection request.</code></pre>
+          <pre><code>${esc(t('agents.connect.prompt', { agentId: a.agent_id }))}</code></pre>
           <div style="margin-top: 0.5rem;">
-            <span style="color: var(--text-muted); font-size: 0.8rem;">Agent ID:</span>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">${esc(t('agents.connect.id'))}</span>
             <code style="user-select: all; cursor: pointer;">${esc(a.agent_id)}</code>
           </div>
         </div>
@@ -140,7 +140,7 @@ async function init() {
     const agents = await fetchAgents();
     renderAgents(agents);
   } catch {
-    listEl.innerHTML = '<div class="empty">Failed to load agents</div>';
+    listEl.innerHTML = `<div class="empty">${esc(t('agents.error'))}</div>`;
   }
 }
 
