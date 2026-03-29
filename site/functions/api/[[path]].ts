@@ -196,9 +196,9 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       return json({ id: requestId, status: action === 'accept' ? 'accepted' : 'rejected' });
     }
 
-    // GET /api/connect/:agentId (poll)
-    const pollMatch = path.match(/^\/api\/connect\/([^/]+)$/);
-    if (method === 'GET' && pollMatch) {
+    // POST /api/connect/:agentId/poll (poll for pending requests)
+    const pollMatch = path.match(/^\/api\/connect\/([^/]+)\/poll$/);
+    if (method === 'POST' && pollMatch) {
       const agentId = decodeURIComponent(pollMatch[1]);
       const body = await request.json() as Record<string, unknown>;
 

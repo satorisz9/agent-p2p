@@ -27,6 +27,7 @@
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { InvoiceAgent } from "../agent/core";
 import type { AgentId, OrgId, InvoiceIssuePayload } from "../types/protocol";
+import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
 
 // --- Parse CLI args ---
 
@@ -48,6 +49,8 @@ function parseArgs() {
     namespace: get("--namespace"),
     dataDir: get("--data-dir"),
     port: parseInt(get("--port", "7700"), 10),
+    discoveryUrl: get("--discovery-url", ""),
+    description: get("--description", ""),
   };
 }
 
@@ -170,6 +173,56 @@ function createDaemonApi(agent: InvoiceAgent, port: number) {
   return server;
 }
 
+// --- Discovery routes (added to existing server) ---
+
+function addDiscoveryRoutes(
+  agent: InvoiceAgent,
+  discovery: DiscoveryClient,
+  pendingRequests: ConnectionRequest[]
+) {
+  return {
+    handleDiscoveryRoute: async (
+      req: IncomingMessage,
+      res: ServerResponse,
+      path: string
+    ): Promise<boolean> => {
+      if (req.method === "POST" && path === "/discovery/register") {
+        const result = await discovery.register();
+        json(res, 200, result);
+        return true;
+      }
+
+      if (req.method === "POST" && path === "/discovery/unregister") {
+        discovery.stopPolling();
+        const result = await discovery.unregister();
+        json(res, 200, result);
+        return true;
+      }
+
+      if (req.method === "GET" && path === "/discovery/requests") {
+        json(res, 200, { requests: pendingRequests });
+        return true;
+      }
+
+      if (req.method === "POST" && path.startsWith("/discovery/requests/")) {
+        const parts = path.split("/");
+        const requestId = parts[3];
+        const action = parts[4]; // accept or reject
+        if (action === "accept" || action === "reject") {
+          const result = await discovery.ackRequest(requestId, action);
+          // Remove from pending
+          const idx = pendingRequests.findIndex(r => r.id === requestId);
+          if (idx !== -1) pendingRequests.splice(idx, 1);
+          json(res, 200, result);
+          return true;
+        }
+      }
+
+      return false;
+    },
+  };
+}
+
 // --- Main ---
 
 async function main() {
@@ -189,6 +242,53 @@ async function main() {
   await agent.start();
   const httpServer = createDaemonApi(agent, config.port);
 
+  // Discovery site integration
+  let discovery: DiscoveryClient | null = null;
+  const pendingRequests: ConnectionRequest[] = [];
+
+  if (config.discoveryUrl) {
+    const agentInfo = agent.getAgentInfo();
+    discovery = new DiscoveryClient({
+      discoveryUrl: config.discoveryUrl,
+      agentId: config.agentId,
+      orgId: config.orgId,
+      publicKey: agentInfo.public_key,
+      privateKey: (agent as any).state.privateKey, // access internal state for signing
+      capabilities: ['data.transfer', 'invoice.issue', 'invoice.accept'],
+      description: config.description,
+    });
+
+    // Register as public
+    try {
+      await discovery.register();
+      console.error(`[Discovery] Registered as public on ${config.discoveryUrl}`);
+    } catch (err) {
+      console.error(`[Discovery] Registration failed: ${(err as Error).message}`);
+    }
+
+    // Poll every 60s for connection requests
+    discovery.startPolling(60_000, (req) => {
+      pendingRequests.push(req);
+      console.error(`[Discovery] New connection request from ${req.from_name || req.from_agent_id || 'anonymous'}: ${req.message || '(no message)'}`);
+    });
+
+    // Add discovery routes to the HTTP server
+    const { handleDiscoveryRoute } = addDiscoveryRoutes(agent, discovery, pendingRequests);
+    const originalListeners = httpServer.listeners('request') as Function[];
+    httpServer.removeAllListeners('request');
+    httpServer.on('request', async (req: IncomingMessage, res: ServerResponse) => {
+      const url = new URL(req.url ?? '/', `http://localhost:${config.port}`);
+      if (url.pathname.startsWith('/discovery/')) {
+        const handled = await handleDiscoveryRoute(req, res, url.pathname);
+        if (handled) return;
+      }
+      // Fall through to original handler
+      for (const listener of originalListeners) {
+        listener(req, res);
+      }
+    });
+  }
+
   // Log new inbox messages
   agent.on("inbox:new", (msg: any) => {
     console.error(
@@ -199,6 +299,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.error("[Daemon] Shutting down...");
+    discovery?.stopPolling();
     httpServer.close();
     await agent.stop();
     process.exit(0);
