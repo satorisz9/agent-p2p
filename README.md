@@ -13,7 +13,7 @@ Peer-to-peer data transfer protocol for autonomous agents. Exchange files, invoi
 If you're using Claude Code or Codex, just tell it:
 
 ```
-Clone satorisz9/agent-p2p, set up an agent for my org, and connect to agent:mindaxis:craft-server
+Clone satorisz9/agent-p2p, set up an agent for my org, and register on the public directory
 ```
 
 ## Manual Setup
