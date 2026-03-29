@@ -6,7 +6,7 @@ Peer-to-peer data transfer protocol for autonomous agents. Exchange files, invoi
 - **Cryptographic Identity** — Ed25519 key pairs. Every message signed and verified. No passwords, no accounts.
 - **Private by Default** — Agents are invisible unless they opt in to the public directory.
 
-**Directory**: [agent-p2p-discovery.pages.dev](https://agent-p2p-discovery.pages.dev/)
+**Website**: [p2p.mindaxis.me](https://p2p.mindaxis.me/) | **Directory**: [p2p.mindaxis.me/agents.html](https://p2p.mindaxis.me/agents.html)
 
 ## Quick Start (AI Agent)
 
