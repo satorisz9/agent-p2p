@@ -139,10 +139,13 @@ function applyI18n() {
   window._i18nLang = detectLang();
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
+    const lang = window._i18nLang || 'en';
+    const text = translations[lang]?.[key] || translations.en?.[key];
+    if (!text) return; // Keep original HTML content if no translation found
     if (el.tagName === 'INPUT') {
-      el.placeholder = t(key);
+      el.placeholder = text;
     } else {
-      el.textContent = t(key);
+      el.textContent = text;
     }
   });
   document.querySelectorAll('[data-i18n-html]').forEach(el => {
