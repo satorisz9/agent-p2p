@@ -156,11 +156,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       if (!target) return err('Target agent not found', 404);
 
       const id = crypto.randomUUID();
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-      const namespace = (body.namespace as string) || 'default';
+      const inviteCode = (body.invite_code as string) || null;
+      if (!inviteCode) return err('invite_code required — generate one with POST /invite/create on your daemon');
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h
 
       await env.DB.prepare(`
-        INSERT INTO connection_requests (id, target_agent_id, from_agent_id, from_name, from_contact, message, namespace, expires_at)
+        INSERT INTO connection_requests (id, target_agent_id, from_agent_id, from_name, from_contact, message, invite_code, expires_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         id, targetId,
@@ -168,11 +169,11 @@ export const onRequest: PagesFunction<Env> = async (context) => {
         (body.from_name as string) || null,
         (body.from_contact as string) || null,
         (body.message as string) || null,
-        namespace,
+        inviteCode,
         expiresAt
       ).run();
 
-      return json({ id, status: 'pending', expires_at: expiresAt }, 201);
+      return json({ id, status: 'pending', invite_code: inviteCode, expires_at: expiresAt }, 201);
     }
 
     // POST /api/connect/:requestId/ack

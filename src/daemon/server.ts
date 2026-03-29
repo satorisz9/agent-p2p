@@ -28,6 +28,7 @@ import { createServer, IncomingMessage, ServerResponse } from "http";
 import { InvoiceAgent } from "../agent/core";
 import type { AgentId, OrgId, InvoiceIssuePayload } from "../types/protocol";
 import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
+import { InviteManager } from "../lib/invite/manager";
 
 // --- Parse CLI args ---
 
@@ -67,7 +68,7 @@ function json(res: ServerResponse, status: number, data: unknown) {
   res.end(JSON.stringify(data));
 }
 
-function createDaemonApi(agent: InvoiceAgent, port: number) {
+function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
     const remoteAddr = req.socket.remoteAddress;
@@ -151,6 +152,30 @@ function createDaemonApi(agent: InvoiceAgent, port: number) {
         return;
       }
 
+      // --- Invite routes ---
+
+      if (req.method === "POST" && path === "/invite/create") {
+        const body = await readBody(req);
+        const parsed = body ? JSON.parse(body) : {};
+        const expiresIn = Math.min(Math.max(parsed.expires_in || 600, 60), 86400); // 1min - 24h
+        const invite = await inviteManager.create(expiresIn);
+        json(res, 200, invite);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/invite/accept") {
+        const body = JSON.parse(await readBody(req));
+        if (!body.code) { json(res, 400, { error: "code required" }); return; }
+        const result = await inviteManager.accept(body.code);
+        json(res, result.success ? 200 : 400, result);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/invite/pending") {
+        json(res, 200, { invites: inviteManager.listPending() });
+        return;
+      }
+
       if (req.method === "GET" && path === "/health") {
         json(res, 200, {
           status: "ok",
@@ -178,7 +203,8 @@ function createDaemonApi(agent: InvoiceAgent, port: number) {
 function addDiscoveryRoutes(
   agent: InvoiceAgent,
   discovery: DiscoveryClient,
-  pendingRequests: ConnectionRequest[]
+  pendingRequests: ConnectionRequest[],
+  inviteManager: InviteManager
 ) {
   return {
     handleDiscoveryRoute: async (
@@ -216,11 +242,24 @@ function addDiscoveryRoutes(
           const idx = pendingRequests.findIndex(r => r.id === requestId);
           if (idx !== -1) pendingRequests.splice(idx, 1);
 
-          // On accept: log the peer for Hyperswarm connection
+          // On accept: auto-connect via invite code
           if (action === "accept" && request?.from_agent_id) {
-            console.error(`[Discovery] Accepted connection from ${request.from_agent_id} — they can now connect via Hyperswarm on the same namespace`);
-            // The peer just needs to join the same Hyperswarm topic (namespace)
-            // to be discovered. No additional action needed — Hyperswarm handles it.
+            const inviteCode = (request as any).invite_code;
+            if (inviteCode) {
+              console.error(`[Discovery] Accepted ${request.from_agent_id} — connecting via invite code ${inviteCode}`);
+              // Accept the invite to establish P2P connection
+              inviteManager.accept(inviteCode).then((r: any) => {
+                  if (r.success) {
+                    console.error(`[Discovery] P2P connected to ${r.peerAgentId} via invite`);
+                  } else {
+                    console.error(`[Discovery] Invite accept failed: ${r.error}`);
+                  }
+                }).catch((e: Error) => {
+                  console.error(`[Discovery] Invite accept error: ${e.message}`);
+                });
+            } else {
+              console.error(`[Discovery] Accepted ${request.from_agent_id} — no invite code, manual connection needed`);
+            }
           }
 
           json(res, 200, result);
@@ -250,7 +289,16 @@ async function main() {
   });
 
   await agent.start();
-  const httpServer = createDaemonApi(agent, config.port);
+  const inviteManager = new InviteManager(config.agentId);
+
+  inviteManager.on("invite:accepted", ({ code, peerAgentId }: any) => {
+    console.error(`[Invite] Peer connected via invite ${code}: ${peerAgentId}`);
+  });
+  inviteManager.on("invite:connected", ({ code, peerAgentId }: any) => {
+    console.error(`[Invite] Connected to peer via invite ${code}: ${peerAgentId}`);
+  });
+
+  const httpServer = createDaemonApi(agent, config.port, inviteManager);
 
   // Discovery site integration
   let discovery: DiscoveryClient | null = null;
@@ -283,7 +331,7 @@ async function main() {
     });
 
     // Add discovery routes to the HTTP server
-    const { handleDiscoveryRoute } = addDiscoveryRoutes(agent, discovery, pendingRequests);
+    const { handleDiscoveryRoute } = addDiscoveryRoutes(agent, discovery, pendingRequests, inviteManager);
     const originalListeners = httpServer.listeners('request') as Function[];
     httpServer.removeAllListeners('request');
     httpServer.on('request', async (req: IncomingMessage, res: ServerResponse) => {
@@ -310,6 +358,7 @@ async function main() {
   const shutdown = async () => {
     console.error("[Daemon] Shutting down...");
     discovery?.stopPolling();
+    await inviteManager.destroy();
     httpServer.close();
     await agent.stop();
     process.exit(0);

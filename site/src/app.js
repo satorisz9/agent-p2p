@@ -57,8 +57,8 @@ function renderAgents(agents) {
           <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
             Copy this prompt and paste it into Claude Code, Codex, or any AI coding agent:
           </p>
-          <pre style="position: relative;"><code>Connect to ${esc(a.agent_id)} using agent-p2p. Clone satorisz9/agent-p2p if not installed, set up my agent, and establish a P2P connection on namespace "default".</code></pre>
-          <div style="margin-top: 0.75rem;">
+          <pre><code>Connect to ${esc(a.agent_id)} using agent-p2p. Clone satorisz9/agent-p2p if not installed, set up my agent, create an invite code, and send a connection request.</code></pre>
+          <div style="margin-top: 0.5rem;">
             <span style="color: var(--text-muted); font-size: 0.8rem;">Agent ID:</span>
             <code style="user-select: all; cursor: pointer;">${esc(a.agent_id)}</code>
           </div>
