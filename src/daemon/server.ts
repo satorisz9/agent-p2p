@@ -32,6 +32,8 @@ import { InvoiceAgent } from "../agent/core";
 import type { AgentId, OrgId, InvoiceIssuePayload } from "../types/protocol";
 import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
 import { InviteManager } from "../lib/invite/manager";
+import { TaskManager } from "../lib/task/manager";
+import type { ConnectionMode, Heartbeat } from "../types/protocol";
 
 // --- Parse CLI args ---
 
@@ -95,7 +97,7 @@ function checkBearerAuth(req: IncomingMessage, expectedToken: string): boolean {
   return parts[1] === expectedToken;
 }
 
-function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager, apiToken: string) {
+function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager, apiToken: string, taskManager: TaskManager) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
     const remoteAddr = req.socket.remoteAddress;
@@ -246,6 +248,94 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
         return;
       }
 
+      // --- Task routes ---
+
+      if (req.method === "POST" && path === "/task/request") {
+        const body = JSON.parse(await readBody(req));
+        const targetId = body.target_agent_id as AgentId;
+        const perm = taskManager.checkPermission(targetId, "task", "request");
+        if (!perm.allowed) { json(res, 403, { error: "Not permitted to request tasks from this peer" }); return; }
+
+        const task = taskManager.createTask(targetId, {
+          type: body.type || "generic",
+          description: body.description || "",
+          input: body.input || {},
+          timeout_ms: body.timeout_ms,
+          priority: body.priority,
+        });
+
+        const sent = (agent as any).swarm.sendTaskMessage(targetId, "task_request", task.request);
+        if (!sent) { json(res, 422, { error: "Peer not connected", task }); return; }
+
+        json(res, 200, { task, needs_approval: perm.needsApproval });
+        return;
+      }
+
+      if (req.method === "GET" && path === "/task/list") {
+        const status = url.searchParams.get("status") || undefined;
+        json(res, 200, { tasks: taskManager.listTasks(status as any) });
+        return;
+      }
+
+      if (req.method === "GET" && path.startsWith("/task/") && path.split("/").length === 3) {
+        const taskId = path.split("/")[2];
+        const task = taskManager.getTask(taskId);
+        json(res, task ? 200 : 404, task || { error: "Task not found" });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/task/respond") {
+        const body = JSON.parse(await readBody(req));
+        const { task_id, action } = body; // action: accept | reject | complete | fail | cancel
+        const task = taskManager.getTask(task_id);
+        if (!task) { json(res, 404, { error: "Task not found" }); return; }
+
+        if (action === "accept") {
+          taskManager.updateTaskStatus(task_id, "accepted");
+          (agent as any).swarm.sendTaskMessage(task.from, "task_accept", { task_id });
+        } else if (action === "reject") {
+          taskManager.updateTaskStatus(task_id, "cancelled");
+          (agent as any).swarm.sendTaskMessage(task.from, "task_reject", { task_id, reason: body.reason || "" });
+        } else if (action === "complete") {
+          const result = { task_id, status: "completed" as const, output: body.output || {}, duration_ms: Date.now() - task.created_at };
+          taskManager.updateTaskStatus(task_id, "completed", result);
+          (agent as any).swarm.sendTaskMessage(task.from, "task_result", result);
+        } else if (action === "fail") {
+          taskManager.updateTaskStatus(task_id, "failed");
+          (agent as any).swarm.sendTaskMessage(task.from, "task_error", { task_id, error_code: "TASK_FAILED", message: body.error || "Failed", retryable: body.retryable ?? false });
+        } else if (action === "cancel") {
+          taskManager.updateTaskStatus(task_id, "cancelled");
+          (agent as any).swarm.sendTaskMessage(task.to === agent.getAgentInfo().agent_id ? task.from : task.to, "task_cancel", { task_id, reason: body.reason });
+        }
+        json(res, 200, taskManager.getTask(task_id));
+        return;
+      }
+
+      // --- Peer permission routes ---
+
+      if (req.method === "GET" && path === "/peers/config") {
+        json(res, 200, { peers: taskManager.listPeers() });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/peers/config") {
+        const body = JSON.parse(await readBody(req));
+        const config = taskManager.setPeerConfig(
+          body.agent_id as AgentId,
+          (body.mode || "restricted") as ConnectionMode,
+          body.shared_namespace
+        );
+        json(res, 200, config);
+        return;
+      }
+
+      // --- Heartbeat ---
+
+      if (req.method === "GET" && path === "/heartbeat") {
+        json(res, 200, taskManager.buildHeartbeat());
+        return;
+      }
+
       json(res, 404, { error: "Not found" });
     } catch (err) {
       json(res, 500, { error: (err as Error).message });
@@ -351,13 +441,59 @@ async function main() {
 
   await agent.start();
   const inviteManager = new InviteManager(config.agentId);
+  const taskManager = new TaskManager(config.agentId, ["generic", "code_review", "run_tests", "transform"], 5);
 
+  // Wire up P2P task/heartbeat events to task manager
+  (agent as any).swarm.on("task", ({ from, type, payload }: any) => {
+    console.error(`[Task] ${type} from ${from}: ${payload.task_id || ""}`);
+    if (type === "task_request") {
+      const perm = taskManager.checkPermission(from, "task", "send");
+      if (!perm.allowed) {
+        (agent as any).swarm.sendTaskMessage(from, "task_reject", { task_id: payload.task_id, reason: "Not permitted" });
+        return;
+      }
+      // Store incoming task
+      const task = taskManager.createTask(from, payload);
+      task.from = from;
+      task.to = config.agentId;
+      if (perm.needsApproval) {
+        console.error(`[Task] Task ${task.task_id} needs approval`);
+        taskManager.emit("task:approval_needed", task);
+      } else {
+        taskManager.updateTaskStatus(task.task_id, "accepted");
+        (agent as any).swarm.sendTaskMessage(from, "task_accept", { task_id: task.task_id });
+        taskManager.emit("task:auto_accepted", task);
+      }
+    } else if (type === "task_accept") {
+      taskManager.updateTaskStatus(payload.task_id, "accepted");
+    } else if (type === "task_reject") {
+      taskManager.updateTaskStatus(payload.task_id, "cancelled");
+    } else if (type === "task_result") {
+      taskManager.updateTaskStatus(payload.task_id, payload.status === "completed" ? "completed" : "failed", payload);
+    } else if (type === "task_error") {
+      taskManager.updateTaskStatus(payload.task_id, "failed");
+    } else if (type === "task_cancel") {
+      taskManager.updateTaskStatus(payload.task_id, "cancelled");
+    }
+  });
+
+  (agent as any).swarm.on("heartbeat", ({ from, payload }: any) => {
+    taskManager.emit("heartbeat:received", { from, ...payload });
+  });
+
+  // Start heartbeat broadcast every 30s
+  taskManager.startHeartbeat(30_000, (hb: Heartbeat) => {
+    (agent as any).swarm.broadcastHeartbeat(hb);
+  });
+
+  // Auto-set peer config on invite success
   inviteManager.on("invite:accepted", ({ code, peerAgentId, sharedNamespace }: any) => {
     console.error(`[Invite] Peer connected via invite ${code}: ${peerAgentId}`);
     if (sharedNamespace) {
       agent.joinNamespace(sharedNamespace);
       console.error(`[Invite] Joined shared namespace: ${sharedNamespace.slice(0, 16)}...`);
     }
+    taskManager.setPeerConfig(peerAgentId, "restricted", sharedNamespace);
   });
   inviteManager.on("invite:connected", ({ code, peerAgentId, sharedNamespace }: any) => {
     console.error(`[Invite] Connected to peer via invite ${code}: ${peerAgentId}`);
@@ -365,6 +501,7 @@ async function main() {
       agent.joinNamespace(sharedNamespace);
       console.error(`[Invite] Joined shared namespace: ${sharedNamespace.slice(0, 16)}...`);
     }
+    taskManager.setPeerConfig(peerAgentId, "restricted", sharedNamespace);
   });
 
   // Load or create API auth token
@@ -372,7 +509,7 @@ async function main() {
   console.error(`[Daemon] API token: ${apiToken}`);
   console.error(`[Daemon] Token file: ${join(config.dataDir, "api-token")}`);
 
-  const httpServer = createDaemonApi(agent, config.port, inviteManager, apiToken);
+  const httpServer = createDaemonApi(agent, config.port, inviteManager, apiToken, taskManager);
 
   // Discovery site integration
   let discovery: DiscoveryClient | null = null;
@@ -432,6 +569,7 @@ async function main() {
   const shutdown = async () => {
     console.error("[Daemon] Shutting down...");
     discovery?.stopPolling();
+    taskManager.destroy();
     await inviteManager.destroy();
     httpServer.close();
     await agent.stop();

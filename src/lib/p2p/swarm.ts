@@ -206,6 +206,28 @@ export class P2PSwarm extends EventEmitter {
     return false;
   }
 
+  /** Send a task message to a specific agent */
+  sendTaskMessage(targetAgentId: AgentId, type: string, payload: unknown): boolean {
+    for (const peer of this.peers.values()) {
+      if (peer.agentId === targetAgentId && peer.connected) {
+        return this.sendRaw(peer.stream, { type, payload });
+      }
+    }
+    return false;
+  }
+
+  /** Broadcast heartbeat to all connected peers */
+  broadcastHeartbeat(payload: unknown): number {
+    let sent = 0;
+    for (const peer of this.peers.values()) {
+      if (peer.connected && peer.verified) {
+        this.sendRaw(peer.stream, { type: "heartbeat", payload });
+        sent++;
+      }
+    }
+    return sent;
+  }
+
   /** Broadcast to all connected peers */
   broadcast(message: SignedMessage): number {
     let sent = 0;
@@ -317,10 +339,25 @@ export class P2PSwarm extends EventEmitter {
         this.emit("file", {
           from: peer.agentId,
           filename: msg.filename,
-          data: msg.data, // base64
+          data: msg.data,
           size: msg.size,
           mime: msg.mime,
         });
+        break;
+
+      case "task_request":
+      case "task_accept":
+      case "task_reject":
+      case "task_result":
+      case "task_error":
+      case "task_cancel":
+        if (!peer.verified) return;
+        this.emit("task", { from: peer.agentId, type: msg.type, payload: msg.payload });
+        break;
+
+      case "heartbeat":
+        if (!peer.verified) return;
+        this.emit("heartbeat", { from: peer.agentId, payload: msg.payload });
         break;
 
       default:

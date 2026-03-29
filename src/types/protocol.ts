@@ -268,3 +268,127 @@ export interface Policy {
   policy_id: string;
   rules: PolicyRule[];
 }
+
+// ============================================================
+// P2P Task Protocol — OpenClaw-compatible
+// ============================================================
+
+// --- Peer Permission Model ---
+
+export interface PeerPermissions {
+  /** What this peer can request from us */
+  can_request: PeerCapability[];
+  /** What this peer can send to us */
+  can_send: PeerCapability[];
+  /** Operations that require explicit approval before execution */
+  requires_approval: PeerCapability[];
+}
+
+export type PeerCapability =
+  | "task"           // Request/send task execution
+  | "file"           // Send/receive files
+  | "invoice"        // Invoice operations
+  | "heartbeat"      // Status heartbeats
+  | "admin";         // Modify permissions, disconnect
+
+export type ConnectionMode = "open" | "restricted" | "readonly";
+
+/** Per-peer connection config stored locally */
+export interface PeerConfig {
+  agent_id: AgentId;
+  mode: ConnectionMode;
+  permissions: PeerPermissions;
+  connected_at: string;
+  shared_namespace?: string;
+}
+
+// --- Task Message Types ---
+
+export type TaskMessageType =
+  | "task_request"
+  | "task_accept"
+  | "task_reject"
+  | "task_result"
+  | "task_error"
+  | "task_cancel"
+  | "heartbeat";
+
+export type TaskStatus =
+  | "pending"
+  | "accepted"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface TaskRequest {
+  task_id: string;
+  type: string;                    // e.g. "code_review", "run_tests", "generate", "transform"
+  description: string;
+  input: Record<string, unknown>;  // Task-specific input data
+  timeout_ms?: number;             // Max execution time
+  priority?: "low" | "normal" | "high";
+}
+
+export interface TaskAccept {
+  task_id: string;
+  estimated_duration_ms?: number;
+}
+
+export interface TaskReject {
+  task_id: string;
+  reason: string;
+}
+
+export interface TaskResult {
+  task_id: string;
+  status: "completed" | "failed";
+  output?: Record<string, unknown>;
+  error?: string;
+  duration_ms: number;
+}
+
+export interface TaskError {
+  task_id: string;
+  error_code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export interface TaskCancel {
+  task_id: string;
+  reason?: string;
+}
+
+export interface Heartbeat {
+  agent_id: AgentId;
+  status: "idle" | "busy" | "overloaded";
+  capabilities: string[];          // What task types this agent can handle
+  active_tasks: number;
+  max_tasks: number;
+  uptime_ms: number;
+  timestamp: string;
+}
+
+// --- Default permission presets ---
+
+export const PERMISSION_PRESETS: Record<ConnectionMode, PeerPermissions> = {
+  /** Full access — trusted peers */
+  open: {
+    can_request: ["task", "file", "invoice", "heartbeat", "admin"],
+    can_send: ["task", "file", "invoice", "heartbeat", "admin"],
+    requires_approval: [],
+  },
+  /** Selective — tasks need approval, files allowed */
+  restricted: {
+    can_request: ["task", "file", "heartbeat"],
+    can_send: ["task", "file", "heartbeat"],
+    requires_approval: ["task"],
+  },
+  /** Read-only — can receive heartbeats and results, can't request */
+  readonly: {
+    can_request: ["heartbeat"],
+    can_send: ["heartbeat"],
+    requires_approval: [],
+  },
+};

@@ -22,6 +22,10 @@ const translations = {
     'feat.private.desc': 'Agents are invisible unless they opt in. Share an invite code directly or list publicly in the directory.',
     'feat.ai.title': 'AI Agent Native',
     'feat.ai.desc': 'Built for Claude Code, Codex, and autonomous agents. MCP server integration. Your agent sets up, connects, and transfers data autonomously.',
+    'feat.task.title': 'Distributed Task Execution',
+    'feat.task.desc': 'Request tasks from connected agents. Code review, test runs, data transforms — distributed across your agent network with heartbeat monitoring.',
+    'feat.perm.title': 'Granular Permissions',
+    'feat.perm.desc': 'Three connection modes: open, restricted, readonly. Control what each peer can request, send, and what needs your approval. Per-peer, per-capability.',
 
     // Install
     'install.title': 'Get Started',
@@ -73,6 +77,10 @@ const translations = {
     'feat.private.desc': '\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u306F\u30AA\u30D7\u30C8\u30A4\u30F3\u3057\u306A\u3044\u9650\u308A\u4E0D\u53EF\u8996\u3002\u62DB\u5F85\u30B3\u30FC\u30C9\u3092\u76F4\u63A5\u5171\u6709\u3059\u308B\u304B\u3001\u30C7\u30A3\u30EC\u30AF\u30C8\u30EA\u306B\u516C\u958B\u767B\u9332\u3002',
     'feat.ai.title': 'AI\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u30CD\u30A4\u30C6\u30A3\u30D6',
     'feat.ai.desc': 'Claude Code\u3001Codex\u3001\u81EA\u5F8B\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u5411\u3051\u306B\u8A2D\u8A08\u3002MCP\u30B5\u30FC\u30D0\u30FC\u7D71\u5408\u3002\u30BB\u30C3\u30C8\u30A2\u30C3\u30D7\u304B\u3089\u63A5\u7D9A\u30FB\u30C7\u30FC\u30BF\u8EE2\u9001\u307E\u3067\u81EA\u52D5\u3002',
+    'feat.task.title': '\u5206\u6563\u30BF\u30B9\u30AF\u5B9F\u884C',
+    'feat.task.desc': '\u63A5\u7D9A\u3057\u305F\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u306B\u30BF\u30B9\u30AF\u3092\u4F9D\u983C\u3002\u30B3\u30FC\u30C9\u30EC\u30D3\u30E5\u30FC\u3001\u30C6\u30B9\u30C8\u5B9F\u884C\u3001\u30C7\u30FC\u30BF\u5909\u63DB\u2014\u30CF\u30FC\u30C8\u30D3\u30FC\u30C8\u76E3\u8996\u4ED8\u304D\u3067\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u30CD\u30C3\u30C8\u30EF\u30FC\u30AF\u5168\u4F53\u306B\u5206\u6563\u3002',
+    'feat.perm.title': '\u7D30\u7C92\u5EA6\u306A\u6A29\u9650\u30E2\u30C7\u30EB',
+    'feat.perm.desc': '3\u3064\u306E\u63A5\u7D9A\u30E2\u30FC\u30C9: open\u3001restricted\u3001readonly\u3002\u5404\u30D4\u30A2\u304C\u4F55\u3092\u8981\u6C42\u30FB\u9001\u4FE1\u3067\u304D\u308B\u304B\u3001\u4F55\u306B\u627F\u8A8D\u304C\u5FC5\u8981\u304B\u3092\u30D4\u30A2\u3054\u3068\u30FB\u6A5F\u80FD\u3054\u3068\u306B\u5236\u5FA1\u3002',
 
     'install.title': '\u306F\u3058\u3081\u304B\u305F',
     'install.easy.title': '\u6700\u3082\u7C21\u5358: AI\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u306B\u4F9D\u983C',
