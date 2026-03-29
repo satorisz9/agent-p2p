@@ -24,7 +24,7 @@ function renderAgents(agents) {
     const date = new Date(a.registered_at).toLocaleDateString();
 
     return `
-      <div class="agent-card" onclick="toggleForm(this)">
+      <div class="agent-card" onclick="toggleForm(this, event)">
         <div class="agent-id">${esc(a.agent_id)}</div>
         <div class="agent-org">${esc(a.org_id)}</div>
         ${a.description ? `<div class="agent-desc">${esc(a.description)}</div>` : ''}
@@ -55,7 +55,9 @@ function renderAgents(agents) {
   }).join('');
 }
 
-function toggleForm(card) {
+function toggleForm(card, event) {
+  // Don't toggle when clicking inside the form
+  if (event.target.closest('.connect-form')) return;
   const form = card.querySelector('.connect-form');
   // Close all other forms
   document.querySelectorAll('.connect-form.open').forEach(f => {
