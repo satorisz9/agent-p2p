@@ -287,6 +287,26 @@ pre code {
   color: var(--text);
 }
 
+.copy-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: var(--border);
+  border: none;
+  color: var(--text-muted);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: color 0.2s, background 0.2s;
+}
+
+.copy-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
 .install h2 {
   font-size: 1.75rem;
   font-weight: 700;
