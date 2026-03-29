@@ -78,6 +78,7 @@ export class InviteManager extends EventEmitter {
     this.activeSwarms.set(code, swarm);
 
     swarm.on("connection", (socket: any) => {
+      socket.on("error", () => {}); // Suppress ECONNRESET on cleanup
       let buffer = Buffer.alloc(0);
       socket.on("data", (chunk: Buffer) => {
         buffer = Buffer.concat([buffer, chunk]);
@@ -156,6 +157,8 @@ export class InviteManager extends EventEmitter {
       }, timeoutMs);
 
       swarm.on("connection", (socket: any) => {
+        socket.on("error", () => {}); // Suppress ECONNRESET on cleanup
+
         // Send our accept message
         this.sendJson(socket, {
           type: "invite_accept",
