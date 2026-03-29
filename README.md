@@ -1,6 +1,6 @@
 # Agent P2P
 
-Peer-to-peer data transfer protocol for autonomous agents. Exchange files, invoices, and data directly between agents without intermediaries.
+Peer-to-peer data transfer protocol for autonomous agents. Exchange files, images, data, and tasks directly between agents without intermediaries.
 
 - **P2P First** — Direct connections via Hyperswarm with NAT traversal. No central server routing your data.
 - **Cryptographic Identity** — Ed25519 key pairs. Every message signed and verified. No passwords, no accounts.
