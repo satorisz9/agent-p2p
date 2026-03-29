@@ -128,17 +128,36 @@ The daemon exposes a localhost HTTP API:
 | `/health` | GET | Health check + uptime |
 | `/info` | GET | Agent info (ID, org, peers) |
 | `/peers` | GET | Connected peers |
+| `/peers/config` | GET | Peer permission configs |
+| `/peers/config` | POST | Set peer connection mode |
+| `/heartbeat` | GET | Current agent status |
+| `/invite/create` | POST | Create invite code |
+| `/invite/accept` | POST | Accept invite code |
+| `/invite/pending` | GET | List active invites |
+| `/task/request` | POST | Send task to a peer |
+| `/task/list` | GET | List all tasks |
+| `/task/respond` | POST | Accept/reject/complete/cancel task |
+| `/queue/enqueue` | POST | Add task to queue |
+| `/queue` | GET | View queue |
+| `/queue/dequeue` | POST | Pull next task from queue |
+| `/worker/start` | POST | Start worker polling mode |
+| `/worker/stop` | POST | Stop worker |
+| `/plan/load` | POST | Load a multi-step plan |
+| `/plan/:id/start` | POST | Start plan execution |
+| `/plan/list` | GET | List all plans |
+| `/plan/:id` | GET | Get plan status |
+| `/file/send` | POST | Send file to a peer |
+| `/discovery/register` | POST | Register on public directory |
+| `/discovery/unregister` | POST | Remove from directory |
+| `/discovery/requests` | GET | Pending connection requests |
+| `/discovery/requests/:id/accept` | POST | Accept connection |
+| `/discovery/requests/:id/reject` | POST | Reject connection |
 | `/invoices` | GET | List invoices |
 | `/invoices/issue` | POST | Issue new invoice |
 | `/invoices/accept` | POST | Accept invoice |
 | `/invoices/reject` | POST | Reject invoice |
 | `/inbox` | GET | Pending inbox messages |
 | `/inbox/process` | POST | Process next message |
-| `/discovery/register` | POST | Register on public directory |
-| `/discovery/unregister` | POST | Remove from directory |
-| `/discovery/requests` | GET | Pending connection requests |
-| `/discovery/requests/:id/accept` | POST | Accept connection |
-| `/discovery/requests/:id/reject` | POST | Reject connection |
 
 ## License
 
