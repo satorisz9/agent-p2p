@@ -33,6 +33,7 @@ import type { AgentId, OrgId, InvoiceIssuePayload } from "../types/protocol";
 import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
 import { InviteManager } from "../lib/invite/manager";
 import { TaskManager } from "../lib/task/manager";
+import { TaskPlanner, type Plan } from "../lib/task/planner";
 import type { ConnectionMode, Heartbeat } from "../types/protocol";
 
 // --- Parse CLI args ---
@@ -97,7 +98,7 @@ function checkBearerAuth(req: IncomingMessage, expectedToken: string): boolean {
   return parts[1] === expectedToken;
 }
 
-function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager, apiToken: string, taskManager: TaskManager) {
+function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager, apiToken: string, taskManager: TaskManager, planner: TaskPlanner) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
     const remoteAddr = req.socket.remoteAddress;
@@ -311,6 +312,108 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
         return;
       }
 
+      // --- Task Queue routes ---
+
+      if (req.method === "POST" && path === "/queue/enqueue") {
+        const body = JSON.parse(await readBody(req));
+        const task = taskManager.enqueue({
+          type: body.type || "generic",
+          description: body.description || "",
+          input: body.input || {},
+          timeout_ms: body.timeout_ms,
+          priority: body.priority,
+        }, body.assign_to);
+        json(res, 200, task);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/queue") {
+        json(res, 200, { length: taskManager.queueLength(), tasks: taskManager.listTasks("pending") });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/queue/dequeue") {
+        const body = await readBody(req);
+        const parsed = body ? JSON.parse(body) : {};
+        const task = taskManager.dequeue(config.agentId, parsed.capabilities);
+        json(res, task ? 200 : 204, task || { message: "No tasks available" });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/worker/start") {
+        const body = await readBody(req);
+        const parsed = body ? JSON.parse(body) : {};
+        const intervalMs = parsed.interval_ms || 30000;
+        const targetPeers = taskManager.listPeers().map(p => p.agent_id);
+
+        taskManager.startWorker(
+          intervalMs,
+          async () => {
+            // Poll all connected peers for tasks
+            for (const peerId of targetPeers) {
+              (agent as any).swarm.sendTaskMessage(peerId, "task_poll", {
+                capabilities: taskManager.buildHeartbeat().capabilities,
+              });
+            }
+            // Wait a bit for response
+            return new Promise<any>((resolve) => {
+              const timer = setTimeout(() => resolve(null), 5000);
+              taskManager.once("worker:task_received", ({ task }: any) => {
+                clearTimeout(timer);
+                resolve(task);
+              });
+            });
+          },
+          async (task) => {
+            // Emit event for external handler (MCP server / Claude Code)
+            taskManager.emit("worker:execute", task);
+            // Default: return success with empty output
+            // Real execution would be handled by the task handler
+            return { output: { message: "Task received, awaiting external execution" } };
+          }
+        );
+        json(res, 200, { status: "worker started", interval_ms: intervalMs, polling_peers: targetPeers });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/worker/stop") {
+        taskManager.stopWorker();
+        json(res, 200, { status: "worker stopped" });
+        return;
+      }
+
+      // --- Plan routes ---
+
+      if (req.method === "POST" && path === "/plan/load") {
+        const body = JSON.parse(await readBody(req)) as Plan;
+        const state = planner.loadPlan(body);
+        json(res, 200, state);
+        return;
+      }
+
+      if (req.method === "POST" && path.match(/^\/plan\/([^/]+)\/start$/)) {
+        const planId = path.split("/")[2];
+        try {
+          planner.start(planId);
+          json(res, 200, planner.getPlan(planId));
+        } catch (e) {
+          json(res, 404, { error: (e as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && path === "/plan/list") {
+        json(res, 200, { plans: planner.listPlans() });
+        return;
+      }
+
+      if (req.method === "GET" && path.match(/^\/plan\/([^/]+)$/)) {
+        const planId = path.split("/")[2];
+        const state = planner.getPlan(planId);
+        json(res, state ? 200 : 404, state || { error: "Plan not found" });
+        return;
+      }
+
       // --- Peer permission routes ---
 
       if (req.method === "GET" && path === "/peers/config") {
@@ -481,7 +584,20 @@ async function main() {
     taskManager.emit("heartbeat:received", { from, ...payload });
   });
 
-  // Start heartbeat broadcast every 30s
+  // Handle task_poll from workers: dequeue a task and send it
+  (agent as any).swarm.on("task_poll", ({ from, capabilities }: any) => {
+    const task = taskManager.dequeue(from, capabilities);
+    (agent as any).swarm.sendTaskMessage(from, "task_poll_response", task || null);
+  });
+
+  // Handle task_poll_response (we're the worker, received a task)
+  (agent as any).swarm.on("task_poll_response", ({ from, task }: any) => {
+    if (task) {
+      taskManager.emit("worker:task_received", { from, task });
+    }
+  });
+
+  // Start heartbeat + task queue poll every 30s
   taskManager.startHeartbeat(30_000, (hb: Heartbeat) => {
     (agent as any).swarm.broadcastHeartbeat(hb);
   });
@@ -509,7 +625,16 @@ async function main() {
   console.error(`[Daemon] API token: ${apiToken}`);
   console.error(`[Daemon] Token file: ${join(config.dataDir, "api-token")}`);
 
-  const httpServer = createDaemonApi(agent, config.port, inviteManager, apiToken, taskManager);
+  const planner = new TaskPlanner(taskManager);
+
+  planner.on("step:enqueued", ({ planId, stepId, taskId }: any) => {
+    console.error(`[Plan] ${planId} step ${stepId} enqueued as ${taskId}`);
+  });
+  planner.on("plan:completed", ({ planId, status }: any) => {
+    console.error(`[Plan] ${planId} ${status}`);
+  });
+
+  const httpServer = createDaemonApi(agent, config.port, inviteManager, apiToken, taskManager, planner);
 
   // Discovery site integration
   let discovery: DiscoveryClient | null = null;
@@ -569,6 +694,7 @@ async function main() {
   const shutdown = async () => {
     console.error("[Daemon] Shutting down...");
     discovery?.stopPolling();
+    planner.destroy();
     taskManager.destroy();
     await inviteManager.destroy();
     httpServer.close();

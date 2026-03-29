@@ -121,6 +121,105 @@ export class TaskManager extends EventEmitter {
     ).length;
   }
 
+  // --- Task Queue (for workers to pull from) ---
+
+  private taskQueue: TrackedTask[] = [];
+  private workerTimer: ReturnType<typeof setInterval> | null = null;
+  private taskHandler: ((task: TrackedTask) => Promise<Record<string, unknown>>) | null = null;
+
+  /** Enqueue a task for any available worker to pick up */
+  enqueue(request: Omit<TaskRequest, "task_id">, assignTo?: AgentId): TrackedTask {
+    const task: TrackedTask = {
+      task_id: `task_${randomUUID()}`,
+      from: this.agentId,
+      to: (assignTo || this.agentId) as AgentId,
+      request: { ...request, task_id: "" },
+      status: "pending",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+    task.request.task_id = task.task_id;
+    this.tasks.set(task.task_id, task);
+    this.taskQueue.push(task);
+    console.error(`[TaskQ] Enqueued: ${task.task_id} type=${request.type}`);
+    return task;
+  }
+
+  /** Dequeue the next pending task (worker pulls) */
+  dequeue(workerAgentId: AgentId, capabilities?: string[]): TrackedTask | null {
+    const idx = this.taskQueue.findIndex(t => {
+      if (t.status !== "pending") return false;
+      if (capabilities && !capabilities.includes(t.request.type)) return false;
+      return true;
+    });
+    if (idx === -1) return null;
+    const task = this.taskQueue.splice(idx, 1)[0];
+    task.to = workerAgentId;
+    task.status = "accepted";
+    task.updated_at = Date.now();
+    console.error(`[TaskQ] Dequeued: ${task.task_id} → ${workerAgentId}`);
+    return task;
+  }
+
+  /** Get queue length */
+  queueLength(): number {
+    return this.taskQueue.filter(t => t.status === "pending").length;
+  }
+
+  /** Register a handler for executing tasks pulled from peers */
+  setTaskHandler(handler: (task: TrackedTask) => Promise<Record<string, unknown>>): void {
+    this.taskHandler = handler;
+  }
+
+  /**
+   * Start worker mode — periodically poll connected peers for tasks.
+   * sendPollFn: sends a "task_poll" message to a peer and returns queued tasks.
+   */
+  startWorker(
+    intervalMs: number,
+    pollFn: () => Promise<TrackedTask | null>,
+    executeFn: (task: TrackedTask) => Promise<{ output?: Record<string, unknown>; error?: string }>
+  ): void {
+    this.workerTimer = setInterval(async () => {
+      if (this.getActiveTasks() >= this.maxTasks) return; // at capacity
+
+      try {
+        const task = await pollFn();
+        if (!task) return;
+
+        this.tasks.set(task.task_id, task);
+        this.updateTaskStatus(task.task_id, "running");
+        console.error(`[Worker] Executing: ${task.task_id} type=${task.request.type}`);
+
+        const result = await executeFn(task);
+        if (result.error) {
+          this.updateTaskStatus(task.task_id, "failed");
+          this.emit("worker:task_failed", { task, error: result.error });
+        } else {
+          const taskResult: TaskResult = {
+            task_id: task.task_id,
+            status: "completed",
+            output: result.output,
+            duration_ms: Date.now() - task.created_at,
+          };
+          this.updateTaskStatus(task.task_id, "completed", taskResult);
+          this.emit("worker:task_completed", { task, result: taskResult });
+        }
+      } catch (err) {
+        console.error(`[Worker] Poll/execute error: ${(err as Error).message}`);
+      }
+    }, intervalMs);
+    console.error(`[Worker] Started (polling every ${intervalMs / 1000}s)`);
+  }
+
+  stopWorker(): void {
+    if (this.workerTimer) {
+      clearInterval(this.workerTimer);
+      this.workerTimer = null;
+      console.error("[Worker] Stopped");
+    }
+  }
+
   // --- Heartbeat ---
 
   buildHeartbeat(): Heartbeat {
