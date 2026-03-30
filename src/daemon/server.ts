@@ -29,12 +29,14 @@ import { randomBytes } from "crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { InvoiceAgent } from "../agent/core";
-import type { AgentId, OrgId, InvoiceIssuePayload } from "../types/protocol";
 import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
 import { InviteManager } from "../lib/invite/manager";
 import { TaskManager } from "../lib/task/manager";
 import { TaskPlanner, type Plan } from "../lib/task/planner";
-import type { ConnectionMode, Heartbeat } from "../types/protocol";
+import { ReputationManager } from "../lib/reputation/manager";
+import { ExecutionVerifier } from "../lib/verification/prover";
+import { EconomicManager } from "../lib/economic/wallet";
+import type { AgentId, OrgId, ConnectionMode, Heartbeat, InvoiceIssuePayload, ExecutionProof } from "../types/protocol";
 
 // --- Parse CLI args ---
 
@@ -98,7 +100,7 @@ function checkBearerAuth(req: IncomingMessage, expectedToken: string): boolean {
   return parts[1] === expectedToken;
 }
 
-function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager, apiToken: string, taskManager: TaskManager, planner: TaskPlanner) {
+function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager, apiToken: string, taskManager: TaskManager, planner: TaskPlanner, reputation: ReputationManager, verifier: ExecutionVerifier, economic: EconomicManager) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
     const remoteAddr = req.socket.remoteAddress;
@@ -440,6 +442,243 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
         return;
       }
 
+      // ============================================================
+      // Reputation routes
+      // ============================================================
+
+      if (req.method === "GET" && path === "/reputation") {
+        const agentIdParam = url.searchParams.get("agent_id") as AgentId | null;
+        if (agentIdParam) {
+          const record = reputation.getRecord(agentIdParam);
+          json(res, record ? 200 : 404, record || { error: "No reputation record" });
+        } else {
+          json(res, 200, { records: reputation.listRecords() });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && path === "/reputation/policy") {
+        json(res, 200, reputation.getPolicy());
+        return;
+      }
+
+      if (req.method === "POST" && path === "/reputation/policy") {
+        const body = JSON.parse(await readBody(req));
+        reputation.setPolicy(body);
+        json(res, 200, reputation.getPolicy());
+        return;
+      }
+
+      // ============================================================
+      // Execution Verification routes
+      // ============================================================
+
+      if (req.method === "POST" && path === "/verification/challenge") {
+        const body = JSON.parse(await readBody(req));
+        const challenge = verifier.createChallenge(body.task_id, body.ttl_ms);
+        json(res, 200, challenge);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/verification/prove") {
+        const body = JSON.parse(await readBody(req));
+        const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const proof = verifier.createProof(
+          body.task_id,
+          body.input,
+          body.output,
+          privateKey,
+          keyId,
+          body.challenge
+        );
+        json(res, 200, proof);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/verification/verify") {
+        const body = JSON.parse(await readBody(req));
+        const proof = body.proof as ExecutionProof;
+        const workerPubKey = (await import("../lib/crypto/keys")).fromBase64(body.worker_public_key);
+        const result = verifier.verifyProof(proof, body.expected_input, body.received_output, workerPubKey);
+        // Update reputation based on verification
+        if (proof.signature?.key_id) {
+          const workerAgentId = body.worker_agent_id as AgentId;
+          if (workerAgentId) {
+            if (result.valid) {
+              reputation.recordVerifiedProof(workerAgentId);
+            }
+          }
+        }
+        json(res, 200, result);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/verification/proof") {
+        const taskId = url.searchParams.get("task_id");
+        if (taskId) {
+          const proof = verifier.getProof(taskId);
+          json(res, proof ? 200 : 404, proof || { error: "No proof found" });
+        } else {
+          json(res, 200, { proofs: verifier.listProofs() });
+        }
+        return;
+      }
+
+      // ============================================================
+      // Economic routes — Tokens
+      // ============================================================
+
+      if (req.method === "POST" && path === "/token/issue") {
+        const body = JSON.parse(await readBody(req));
+        const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const token = economic.issueToken(
+          body.name, body.symbol, body.decimals || 18,
+          body.initial_supply || 0, privateKey, keyId
+        );
+        json(res, 200, token);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/token/register") {
+        const body = JSON.parse(await readBody(req));
+        const token = economic.registerExternalToken(
+          body.token_id, body.name, body.symbol,
+          body.decimals || 18, body.chain, body.contract_address
+        );
+        json(res, 200, token);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/token/list") {
+        json(res, 200, { tokens: economic.listTokens() });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/token/mint") {
+        const body = JSON.parse(await readBody(req));
+        const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const result = economic.mint(body.token_id, body.amount, privateKey, keyId);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/token/transfer") {
+        const body = JSON.parse(await readBody(req));
+        const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const result = economic.transfer(body.to as AgentId, body.token_id, body.amount, privateKey, keyId);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      // ============================================================
+      // Economic routes — Wallet
+      // ============================================================
+
+      if (req.method === "GET" && path === "/wallet") {
+        const myAgentId = agent.getAgentInfo().agent_id;
+        const agentIdParam = url.searchParams.get("agent_id") as AgentId || myAgentId;
+        const wallet = economic.getWallet(agentIdParam);
+        json(res, wallet ? 200 : 404, wallet || { error: "No wallet" });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/wallet/connect") {
+        const body = JSON.parse(await readBody(req));
+        const myAgentId = agent.getAgentInfo().agent_id;
+        const wallet = economic.connectWallet(myAgentId, body.chain, body.address);
+        json(res, 200, wallet);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/wallet/balance") {
+        const tokenId = url.searchParams.get("token_id");
+        const myAgentId = agent.getAgentInfo().agent_id;
+        const agentIdParam = url.searchParams.get("agent_id") as AgentId || myAgentId;
+        if (!tokenId) { json(res, 400, { error: "token_id required" }); return; }
+        json(res, 200, { balance: economic.getBalance(agentIdParam, tokenId) });
+        return;
+      }
+
+      // ============================================================
+      // Economic routes — Offers & Escrow
+      // ============================================================
+
+      if (req.method === "POST" && path === "/offer/create") {
+        const body = JSON.parse(await readBody(req));
+        const offer = economic.createOffer(body.task_id, body.to as AgentId, body.token_id, body.amount);
+        json(res, 200, offer);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/offer/list") {
+        json(res, 200, { offers: economic.listOffers() });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/escrow/lock") {
+        const body = JSON.parse(await readBody(req));
+        const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const result = economic.lockEscrow(body.offer_id, privateKey, keyId);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/escrow/release") {
+        const body = JSON.parse(await readBody(req));
+        const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const result = economic.releaseEscrow(body.escrow_id, body.proof_id, privateKey, keyId);
+        // Update reputation on payment release
+        const escrow = economic.getEscrow(body.escrow_id);
+        if (result.success && escrow) {
+          reputation.recordTaskCompleted(escrow.to, 0, 0);
+        }
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/escrow/refund") {
+        const body = JSON.parse(await readBody(req));
+        const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const result = economic.refundEscrow(body.escrow_id, privateKey, keyId);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/escrow/dispute") {
+        const body = JSON.parse(await readBody(req));
+        const result = economic.disputeEscrow(body.escrow_id);
+        // Record dispute in reputation
+        const escrow = economic.getEscrow(body.escrow_id);
+        if (escrow) {
+          reputation.recordDispute(escrow.to);
+        }
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/escrow/list") {
+        json(res, 200, { escrows: economic.listEscrows() });
+        return;
+      }
+
+      if (req.method === "GET" && path === "/ledger") {
+        const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+        json(res, 200, { entries: economic.getLedger(limit) });
+        return;
+      }
+
+      if (req.method === "GET" && path === "/ledger/verify") {
+        json(res, 200, economic.verifyLedgerIntegrity());
+        return;
+      }
+
       json(res, 404, { error: "Not found" });
     } catch (err) {
       json(res, 500, { error: (err as Error).message });
@@ -546,6 +785,9 @@ async function main() {
   await agent.start();
   const inviteManager = new InviteManager(config.agentId);
   const taskManager = new TaskManager(config.agentId, ["generic", "code_review", "run_tests", "transform"], 5);
+  const reputation = new ReputationManager();
+  const verifier = new ExecutionVerifier();
+  const economic = new EconomicManager(config.agentId);
 
   // Auto-set default peer config when a peer connects (if not already set via invite)
   (agent as any).swarm.on("peer:identified", (peer: any) => {
@@ -579,11 +821,24 @@ async function main() {
     } else if (type === "task_reject") {
       taskManager.updateTaskStatus(payload.task_id, "cancelled");
     } else if (type === "task_result") {
+      const task = taskManager.getTask(payload.task_id);
       taskManager.updateTaskStatus(payload.task_id, payload.status === "completed" ? "completed" : "failed", payload);
+      // Update reputation based on task outcome
+      if (task) {
+        const responseMs = task.updated_at - task.created_at;
+        const executionMs = payload.duration_ms || 0;
+        if (payload.status === "completed") {
+          reputation.recordTaskCompleted(from, responseMs, executionMs);
+        } else {
+          reputation.recordTaskFailed(from);
+        }
+      }
     } else if (type === "task_error") {
       taskManager.updateTaskStatus(payload.task_id, "failed");
+      reputation.recordTaskFailed(from);
     } else if (type === "task_cancel") {
       taskManager.updateTaskStatus(payload.task_id, "cancelled");
+      reputation.recordTaskCancelled(from);
     }
   });
 
@@ -601,6 +856,15 @@ async function main() {
   (agent as any).swarm.on("task_poll_response", ({ from, task }: any) => {
     if (task) {
       taskManager.emit("worker:task_received", { from, task });
+    }
+  });
+
+  // Auto-adjust peer permissions based on reputation
+  reputation.on("reputation:mode_suggestion", ({ agent_id, score, suggested_mode, reason }: any) => {
+    const current = taskManager.getPeerConfig(agent_id);
+    if (current && current.mode !== suggested_mode) {
+      console.error(`[Reputation] ${agent_id} score=${score.toFixed(3)}: ${reason} → adjusting to ${suggested_mode}`);
+      taskManager.setPeerConfig(agent_id, suggested_mode);
     }
   });
 
@@ -643,7 +907,7 @@ async function main() {
     console.error(`[Plan] ${planId} ${status}`);
   });
 
-  const httpServer = createDaemonApi(agent, config.port, inviteManager, apiToken, taskManager, planner);
+  const httpServer = createDaemonApi(agent, config.port, inviteManager, apiToken, taskManager, planner, reputation, verifier, economic);
 
   // Discovery site integration
   let discovery: DiscoveryClient | null = null;
@@ -705,6 +969,9 @@ async function main() {
     discovery?.stopPolling();
     planner.destroy();
     taskManager.destroy();
+    reputation.destroy();
+    verifier.destroy();
+    economic.destroy();
     await inviteManager.destroy();
     httpServer.close();
     await agent.stop();

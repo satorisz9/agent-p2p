@@ -392,3 +392,204 @@ export const PERMISSION_PRESETS: Record<ConnectionMode, PeerPermissions> = {
     requires_approval: [],
   },
 };
+
+// ============================================================
+// Reputation Layer — Trust Scoring
+// ============================================================
+
+export interface ReputationRecord {
+  agent_id: AgentId;
+  /** Total tasks completed successfully */
+  tasks_completed: number;
+  /** Total tasks failed or timed out */
+  tasks_failed: number;
+  /** Total tasks cancelled by this peer */
+  tasks_cancelled: number;
+  /** Average response time in ms (from request to accept) */
+  avg_response_ms: number;
+  /** Average execution time in ms (from accept to result) */
+  avg_execution_ms: number;
+  /** Trust score: 0.0 - 1.0 (computed from metrics) */
+  score: number;
+  /** Number of disputes raised against this peer */
+  disputes: number;
+  /** Number of verified execution proofs */
+  verified_proofs: number;
+  /** Last interaction timestamp */
+  last_interaction: string;
+  /** Score history for trend analysis */
+  history: ReputationSnapshot[];
+}
+
+export interface ReputationSnapshot {
+  timestamp: string;
+  score: number;
+  reason: string; // e.g. "task_completed", "task_failed", "dispute"
+}
+
+/** Thresholds for automatic permission adjustments */
+export interface ReputationPolicy {
+  /** Score below which peer is demoted to readonly */
+  demote_threshold: number;     // default 0.3
+  /** Score above which peer is promoted to open */
+  promote_threshold: number;    // default 0.8
+  /** Minimum completed tasks before score affects permissions */
+  min_interactions: number;     // default 5
+  /** Weight for recency — newer interactions count more */
+  recency_decay: number;        // default 0.95
+}
+
+// ============================================================
+// Execution Verification — Proof of Result
+// ============================================================
+
+/** Proof attached to a task result to prove execution integrity */
+export interface ExecutionProof {
+  /** Unique proof ID */
+  proof_id: string;
+  /** Task this proof is for */
+  task_id: string;
+  /** SHA-256 hash of the task input (canonical JSON) */
+  input_hash: string;
+  /** SHA-256 hash of the task output (canonical JSON) */
+  output_hash: string;
+  /** Ed25519 signature over (task_id + input_hash + output_hash + timestamp) */
+  signature: Signature;
+  /** When the proof was created */
+  timestamp: string;
+  /** Optional: challenge issued by requester before execution */
+  challenge?: string;
+  /** Optional: nonce proving work was done after challenge */
+  challenge_response?: string;
+}
+
+/** Challenge sent by task requester to prevent pre-computation */
+export interface ExecutionChallenge {
+  task_id: string;
+  /** Random 32-byte nonce (hex) */
+  nonce: string;
+  /** Challenge must be included in the proof signature */
+  issued_at: string;
+  /** Challenge expires after this time */
+  expires_at: string;
+}
+
+/** Verification result */
+export interface VerificationResult {
+  valid: boolean;
+  proof_id: string;
+  task_id: string;
+  /** Which checks passed/failed */
+  checks: {
+    input_hash_match: boolean;
+    output_hash_match: boolean;
+    signature_valid: boolean;
+    challenge_valid: boolean;
+    timestamp_valid: boolean;
+  };
+  error?: string;
+}
+
+// ============================================================
+// Economic Layer — Wallet & Token System
+// ============================================================
+
+/** Supported wallet/token types */
+export type TokenType = "native" | "erc20" | "spl" | "custom";
+export type ChainType = "local" | "ethereum" | "solana" | "custom";
+
+/** Token definition — either a well-known token or a project-issued one */
+export interface TokenDefinition {
+  token_id: string;             // e.g. "eth:USDC", "sol:BONK", "local:PROJ-XYZ"
+  name: string;
+  symbol: string;
+  decimals: number;
+  chain: ChainType;
+  token_type: TokenType;
+  /** For custom tokens: the issuer agent */
+  issuer?: AgentId;
+  /** Total supply (for custom tokens) */
+  total_supply?: number;
+  /** Contract address (for on-chain tokens) */
+  contract_address?: string;
+  created_at: string;
+}
+
+/** Wallet — abstraction over different chain wallets */
+export interface Wallet {
+  wallet_id: string;
+  agent_id: AgentId;
+  chain: ChainType;
+  /** Public address (chain-specific or agent public key for local) */
+  address: string;
+  /** Balances per token */
+  balances: Record<string, number>;  // token_id → amount
+  created_at: string;
+}
+
+/** Payment promise attached to a task request */
+export interface PaymentOffer {
+  offer_id: string;
+  task_id: string;
+  from: AgentId;
+  to: AgentId;
+  token_id: string;
+  amount: number;
+  /** Escrow: locked on task accept, released on verified completion */
+  status: EscrowStatus;
+  created_at: string;
+  settled_at?: string;
+}
+
+export type EscrowStatus =
+  | "offered"        // Payment promised but not locked
+  | "locked"         // Funds locked in escrow on task accept
+  | "released"       // Funds released to worker on verified completion
+  | "refunded"       // Funds returned to requester on failure/cancellation
+  | "disputed";      // Under dispute resolution
+
+/** Escrow record for locked funds */
+export interface EscrowRecord {
+  escrow_id: string;
+  offer_id: string;
+  task_id: string;
+  from: AgentId;
+  to: AgentId;
+  token_id: string;
+  amount: number;
+  status: EscrowStatus;
+  /** Ed25519 signature from the payer authorizing the lock */
+  lock_signature: Signature;
+  locked_at: string;
+  released_at?: string;
+  /** Proof required for release */
+  required_proof_id?: string;
+}
+
+/** Ledger entry for all token movements */
+export interface LedgerEntry {
+  entry_id: string;
+  timestamp: string;
+  from: AgentId | "system";     // "system" for minting
+  to: AgentId | "system";       // "system" for burning
+  token_id: string;
+  amount: number;
+  entry_type: "mint" | "transfer" | "escrow_lock" | "escrow_release" | "escrow_refund" | "burn";
+  reference_id?: string;        // task_id, escrow_id, etc.
+  /** Ed25519 signature from the sender */
+  signature?: Signature;
+  /** SHA-256 hash of previous entry (chain integrity) */
+  prev_hash: string;
+}
+
+/** Task message types extended for economic protocol */
+export type EconomicMessageType =
+  | "payment.offer"
+  | "payment.accept"
+  | "payment.reject"
+  | "escrow.lock"
+  | "escrow.release"
+  | "escrow.refund"
+  | "escrow.dispute"
+  | "token.mint"
+  | "token.transfer";
