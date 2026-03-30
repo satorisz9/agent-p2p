@@ -171,6 +171,18 @@ const TOOLS = [
     },
   },
   {
+    name: "wallet_balance",
+    description: "Query wallet balance for a token and optional agent.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["token_id"],
+      properties: {
+        token_id: { type: "string" },
+        agent_id: { type: "string", description: "Optional agent ID override" },
+      },
+    },
+  },
+  {
     name: "token_issue",
     description: "Issue a new marketplace token to the local agent wallet.",
     inputSchema: {
@@ -180,18 +192,6 @@ const TOOLS = [
         name: { type: "string" },
         symbol: { type: "string" },
         initial_supply: { type: "number" },
-      },
-    },
-  },
-  {
-    name: "wallet_balance",
-    description: "Query wallet balance for a token and optional agent.",
-    inputSchema: {
-      type: "object" as const,
-      required: ["token_id"],
-      properties: {
-        token_id: { type: "string" },
-        agent_id: { type: "string", description: "Optional agent ID override" },
       },
     },
   },
@@ -288,31 +288,7 @@ const TOOLS = [
       },
     },
   },
-  {
-    name: "inbox_list",
-    description:
-      "List unprocessed messages in the inbox (received via P2P but not yet validated/processed)",
-    inputSchema: { type: "object" as const, properties: {} },
-  },
-  {
-    name: "inbox_process",
-    description:
-      "Process the next unprocessed message from the inbox. Validates signature, schema, and business rules, then applies the state transition.",
-    inputSchema: { type: "object" as const, properties: {} },
-  },
-  {
-    name: "audit_log",
-    description: "View audit trail, optionally filtered by invoice ID",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        invoice_id: {
-          type: "string",
-          description: "Optional: filter by invoice ID",
-        },
-      },
-    },
-  },
+  // --- Billing (legacy invoice protocol) ---
   {
     name: "invoice_issue",
     description:
@@ -377,6 +353,31 @@ const TOOLS = [
         invoice_id: { type: "string" },
         reason_code: { type: "string" },
         reason_message: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "inbox_list",
+    description:
+      "List unprocessed messages in the inbox (received via P2P but not yet validated/processed)",
+    inputSchema: { type: "object" as const, properties: {} },
+  },
+  {
+    name: "inbox_process",
+    description:
+      "Process the next unprocessed message from the inbox. Validates signature, schema, and business rules, then applies the state transition.",
+    inputSchema: { type: "object" as const, properties: {} },
+  },
+  {
+    name: "audit_log",
+    description: "View audit trail, optionally filtered by invoice ID",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        invoice_id: {
+          type: "string",
+          description: "Optional: filter by invoice ID",
+        },
       },
     },
   },

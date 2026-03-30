@@ -29,8 +29,11 @@ import {
   type EncryptedKey,
 } from "../lib/crypto/keystore";
 import { validatePayload } from "../lib/validation/schemas";
-import { validateBusinessRules } from "../lib/validation/business";
-import { transition } from "../lib/state/machine";
+import {
+  BillingService,
+  type BillingAuditEntry,
+  type BillingInvoiceRecord,
+} from "./billing";
 
 import type {
   AgentId,
@@ -53,23 +56,10 @@ interface AgentState {
   privateKey: string; // base64 (plaintext fallback, cleared when encrypted)
   encryptedPrivateKey?: EncryptedKey; // AES-256-GCM encrypted private key
   namespace: string;
-  invoices: Record<
-    string,
-    {
-      state: InvoiceState;
-      payload?: unknown;
-      lastMessageId: string;
-      updatedAt: string;
-    }
-  >;
+  invoices: Record<string, BillingInvoiceRecord>;
   inbox: SignedMessage[];
   knownPeers: Record<string, { publicKey: string; agentId: AgentId }>;
-  auditLog: Array<{
-    timestamp: string;
-    event: string;
-    invoiceId?: string;
-    details: Record<string, unknown>;
-  }>;
+  auditLog: BillingAuditEntry[];
 }
 
 export interface AgentConfig {
@@ -83,6 +73,7 @@ export class P2PAgent extends EventEmitter {
   private state!: AgentState;
   private keys!: KeyPair;
   private swarm!: P2PSwarm;
+  private billing: BillingService;
   private config: AgentConfig;
   private stateFile: string;
 
@@ -90,6 +81,14 @@ export class P2PAgent extends EventEmitter {
     super();
     this.config = config;
     this.stateFile = join(config.dataDir, "agent-state.json");
+    this.billing = new BillingService({
+      agentId: this.config.agentId,
+      getState: () => this.state,
+      sendMessage: (targetAgentId, message) => this.swarm.sendMessage(targetAgentId, message),
+      buildEnvelope: (params, payload) => this.buildEnvelope(params, payload),
+      audit: (event, invoiceId, details = {}) => this.audit(event, invoiceId, details),
+      saveState: () => this.saveState(),
+    });
   }
 
   // ============================================================
@@ -157,39 +156,7 @@ export class P2PAgent extends EventEmitter {
     targetAgentId: AgentId,
     invoicePayload: InvoiceIssuePayload
   ): { success: boolean; messageId?: string; error?: string } {
-    const invoiceId = invoicePayload.meta.invoice_id;
-
-    // Build envelope
-    const envelope = this.buildEnvelope({
-      to: targetAgentId,
-      messageType: "invoice.issue",
-      threadId: `thr_${invoiceId}`,
-      idempotencyKey: `issue-${invoiceId}-v1`,
-    }, invoicePayload);
-
-    const message: SignedMessage = { envelope, payload: invoicePayload };
-
-    // Send via P2P
-    const sent = this.swarm.sendMessage(targetAgentId, message);
-    if (!sent) {
-      return {
-        success: false,
-        error: `Peer ${targetAgentId} not connected. Message queued for retry.`,
-        messageId: envelope.message_id,
-      };
-    }
-
-    // Update local state
-    this.state.invoices[invoiceId] = {
-      state: "issued",
-      payload: invoicePayload,
-      lastMessageId: envelope.message_id,
-      updatedAt: new Date().toISOString(),
-    };
-    this.audit("invoice.issued", invoiceId, { to: targetAgentId });
-    this.saveState();
-
-    return { success: true, messageId: envelope.message_id };
+    return this.billing.issueInvoice(targetAgentId, invoicePayload);
   }
 
   /** Process the next message in the inbox */
@@ -214,41 +181,7 @@ export class P2PAgent extends EventEmitter {
     invoiceId: string,
     scheduledPaymentDate?: string
   ): { success: boolean; error?: string } {
-    const inv = this.state.invoices[invoiceId];
-    if (!inv) return { success: false, error: "Invoice not found" };
-
-    const trans = transition(inv.state, "invoice.accept");
-    if (!trans.ok) return { success: false, error: trans.error };
-
-    inv.state = trans.nextState!;
-    inv.updatedAt = new Date().toISOString();
-
-    // Send accept message to issuer
-    const acceptPayload = {
-      meta: { invoice_id: invoiceId, currency: "JPY" as const },
-      data: {
-        accepted_at: new Date().toISOString(),
-        accepted_by_agent: this.config.agentId,
-        payment_status: "scheduled" as const,
-        scheduled_payment_date: scheduledPaymentDate,
-      },
-    };
-
-    // Find issuer from invoice state
-    const issuerAgentId = this.findIssuerAgent(invoiceId);
-    if (issuerAgentId) {
-      const envelope = this.buildEnvelope({
-        to: issuerAgentId,
-        messageType: "invoice.accept",
-        threadId: `thr_${invoiceId}`,
-        idempotencyKey: `accept-${invoiceId}`,
-      }, acceptPayload);
-      this.swarm.sendMessage(issuerAgentId, { envelope, payload: acceptPayload });
-    }
-
-    this.audit("invoice.accepted", invoiceId, { scheduledPaymentDate });
-    this.saveState();
-    return { success: true };
+    return this.billing.acceptInvoice(invoiceId, scheduledPaymentDate);
   }
 
   /** Reject an invoice */
@@ -257,18 +190,7 @@ export class P2PAgent extends EventEmitter {
     reasonCode: string,
     reasonMessage: string
   ): { success: boolean; error?: string } {
-    const inv = this.state.invoices[invoiceId];
-    if (!inv) return { success: false, error: "Invoice not found" };
-
-    const trans = transition(inv.state, "invoice.reject");
-    if (!trans.ok) return { success: false, error: trans.error };
-
-    inv.state = trans.nextState!;
-    inv.updatedAt = new Date().toISOString();
-
-    this.audit("invoice.rejected", invoiceId, { reasonCode, reasonMessage });
-    this.saveState();
-    return { success: true };
+    return this.billing.rejectInvoice(invoiceId, reasonCode, reasonMessage);
   }
 
   // ============================================================
@@ -276,15 +198,11 @@ export class P2PAgent extends EventEmitter {
   // ============================================================
 
   getInvoice(invoiceId: string) {
-    return this.state.invoices[invoiceId] ?? null;
+    return this.billing.getInvoice(invoiceId);
   }
 
   listInvoices() {
-    return Object.entries(this.state.invoices).map(([id, inv]) => ({
-      invoice_id: id,
-      state: inv.state,
-      updated_at: inv.updatedAt,
-    }));
+    return this.billing.listInvoices();
   }
 
   getInbox() {
@@ -391,110 +309,15 @@ export class P2PAgent extends EventEmitter {
     // Handle by message type
     switch (envelope.message_type) {
       case "invoice.issue":
-        return this.handleInvoiceIssue(envelope, payload as InvoiceIssuePayload);
+        return this.billing.handleInvoiceIssue(envelope, payload as InvoiceIssuePayload);
       case "invoice.accept":
       case "invoice.reject":
       case "invoice.request_fix":
       case "payment.notice":
-        return this.handleStateUpdate(envelope, payload);
+        return this.billing.handleStateUpdate(envelope, payload);
       default:
         return { processed: true, action: "ignored", details: `Unknown type: ${envelope.message_type}` };
     }
-  }
-
-  private handleInvoiceIssue(
-    envelope: Envelope,
-    payload: InvoiceIssuePayload
-  ): { processed: boolean; action: string; invoiceId: string; details: unknown } {
-    const invoiceId = payload.meta.invoice_id;
-
-    // Duplicate check
-    if (this.state.invoices[invoiceId]) {
-      return {
-        processed: true,
-        action: "rejected_duplicate",
-        invoiceId,
-        details: `Invoice ${invoiceId} already exists`,
-      };
-    }
-
-    // Business validation
-    const bizResult = validateBusinessRules(payload);
-
-    if (!bizResult.valid) {
-      this.state.invoices[invoiceId] = {
-        state: "fix_requested",
-        payload,
-        lastMessageId: envelope.message_id,
-        updatedAt: new Date().toISOString(),
-      };
-      this.audit("invoice.fix_requested", invoiceId, {
-        issues: bizResult.fixableIssues,
-      });
-      return {
-        processed: true,
-        action: "request_fix",
-        invoiceId,
-        details: bizResult.fixableIssues,
-      };
-    }
-
-    // Store as validated, waiting for accept/reject decision
-    this.state.invoices[invoiceId] = {
-      state: "validated",
-      payload,
-      lastMessageId: envelope.message_id,
-      updatedAt: new Date().toISOString(),
-    };
-    this.audit("invoice.received_and_validated", invoiceId, {
-      from: envelope.from,
-      total: payload.data.total,
-    });
-
-    return {
-      processed: true,
-      action: "validated",
-      invoiceId,
-      details: {
-        from: envelope.from,
-        total: payload.data.total,
-        currency: payload.meta.currency,
-      },
-    };
-  }
-
-  private handleStateUpdate(
-    envelope: Envelope,
-    payload: unknown
-  ): { processed: boolean; action: string; invoiceId?: string; details: unknown } {
-    const meta = (payload as any)?.meta;
-    const invoiceId = meta?.invoice_id;
-    if (!invoiceId || !this.state.invoices[invoiceId]) {
-      return { processed: true, action: "ignored", details: "Unknown invoice" };
-    }
-
-    const inv = this.state.invoices[invoiceId];
-    const trans = transition(inv.state, envelope.message_type);
-    if (!trans.ok) {
-      return {
-        processed: true,
-        action: "ignored",
-        invoiceId,
-        details: trans.error,
-      };
-    }
-
-    inv.state = trans.nextState!;
-    inv.lastMessageId = envelope.message_id;
-    inv.updatedAt = new Date().toISOString();
-    this.audit(envelope.message_type, invoiceId, { payload });
-
-    return {
-      processed: true,
-      action: envelope.message_type,
-      invoiceId,
-      details: { newState: trans.nextState },
-    };
   }
 
   private handleIncomingMessage(message: SignedMessage, fromAgentId?: AgentId): void {
@@ -541,14 +364,6 @@ export class P2PAgent extends EventEmitter {
       this.state.keyId
     );
     return envelope;
-  }
-
-  private findIssuerAgent(invoiceId: string): AgentId | null {
-    // Look through audit log for the original issuer
-    const entry = this.state.auditLog.find(
-      (e) => e.invoiceId === invoiceId && e.event === "invoice.received_and_validated"
-    );
-    return (entry?.details?.from as AgentId) ?? null;
   }
 
   private audit(event: string, invoiceId?: string, details: Record<string, unknown> = {}): void {

@@ -69,7 +69,7 @@ function startDaemon(agentId: string, orgId: string, port: number, dataDir: stri
     "--data-dir", dataDir,
     "--port", String(port),
   ], {
-    cwd: "/home/opc/agent-p2p",
+    cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, AGENT_P2P_PASSPHRASE: "e2e-test" },
   });
