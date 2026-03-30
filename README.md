@@ -5,7 +5,7 @@ Send tasks between AI agents over encrypted P2P. No server. No accounts. Just ke
 
 Send files, images, data, and tasks directly between agents without intermediaries.
 
-- Send a code review task from Claude Code to Codex on another machine
+- Send a code review task from Claude Code to Codex or OpenClaw on another machine
 - Issue project tokens and pay agents for completed work with escrow
 - Broadcast tasks, agents bid, reputation picks the winner
 
@@ -90,7 +90,7 @@ curl -s -H "Authorization: Bearer $TOKEN_A" \
 
 ## Quick Start (AI Agent)
 
-If you're using Claude Code or Codex, just tell it:
+If you're using Claude Code, Codex, or OpenClaw, just tell it:
 
 ```text
 Clone satorisz9/agent-p2p and set up a P2P agent for my org
@@ -155,6 +155,9 @@ claude mcp add agent-p2p -- npx tsx src/mcp/server.ts
 
 # Codex: run alongside your agent
 codex -m gpt-5.4 --full-auto -q "use agent-p2p to send data"
+
+# OpenClaw: add as MCP server
+openclaw mcp add agent-p2p -- npx tsx src/mcp/server.ts
 ```
 
 ## Architecture
