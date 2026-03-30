@@ -311,6 +311,9 @@ export type TaskMessageType =
   | "task_result"
   | "task_error"
   | "task_cancel"
+  | "task_broadcast"    // issuer broadcasts task to all peers
+  | "task_bid"          // agent submits bid on broadcast task
+  | "task_award"        // issuer awards task to winning bidder
   | "heartbeat";
 
 export type TaskStatus =
@@ -593,3 +596,94 @@ export type EconomicMessageType =
   | "escrow.dispute"
   | "token.mint"
   | "token.transfer";
+
+// ============================================================
+// Bidding / Marketplace — Decentralized Work Market
+// ============================================================
+
+/** A task broadcast to all connected peers for bidding */
+export interface TaskBroadcast {
+  task_id: string;
+  type: string;                     // e.g. "code_review", "generate"
+  description: string;
+  input: Record<string, unknown>;
+  /** Maximum budget the issuer is willing to pay */
+  budget: {
+    token_id: string;
+    max_amount: number;
+  };
+  /** Required minimum reputation score (0.0-1.0) */
+  min_reputation?: number;
+  /** Required capabilities */
+  required_capabilities?: string[];
+  timeout_ms?: number;
+  priority?: "low" | "normal" | "high";
+  /** Bidding deadline — after this, no new bids accepted */
+  bid_deadline: string;             // ISO 8601
+  /** Selection strategy */
+  selection: BidSelectionStrategy;
+  created_at: string;
+}
+
+export type BidSelectionStrategy =
+  | "lowest_price"      // cheapest bid wins
+  | "highest_reputation" // most trusted agent wins
+  | "best_value"         // weighted score of price + reputation + speed
+  | "manual";            // issuer picks manually
+
+/** A bid submitted by an agent on a broadcast task */
+export interface TaskBid {
+  bid_id: string;
+  task_id: string;
+  bidder: AgentId;
+  /** Proposed price */
+  price: {
+    token_id: string;
+    amount: number;
+  };
+  /** Estimated execution time */
+  estimated_duration_ms: number;
+  /** Bidder's current reputation score (self-reported, verified by issuer) */
+  reputation_score: number;
+  /** Free-form message from bidder */
+  message?: string;
+  /** Bidder's relevant capabilities */
+  capabilities: string[];
+  submitted_at: string;
+}
+
+/** Award notification sent to the winning bidder */
+export interface TaskAward {
+  task_id: string;
+  bid_id: string;
+  awarded_to: AgentId;
+  /** Final agreed price */
+  agreed_price: {
+    token_id: string;
+    amount: number;
+  };
+  awarded_at: string;
+}
+
+/** Auction state for a broadcast task */
+export type AuctionStatus =
+  | "open"          // accepting bids
+  | "closed"        // bid deadline passed, selecting winner
+  | "awarded"       // winner selected, task in progress
+  | "completed"     // task done and paid
+  | "cancelled"     // auction cancelled by issuer
+  | "no_bids";      // deadline passed with no bids
+
+export interface AuctionRecord {
+  task_id: string;
+  broadcast: TaskBroadcast;
+  bids: TaskBid[];
+  status: AuctionStatus;
+  winner_bid_id?: string;
+  winner_agent_id?: AgentId;
+  escrow_id?: string;
+  proof_id?: string;
+  created_at: string;
+  awarded_at?: string;
+  completed_at?: string;
+}
