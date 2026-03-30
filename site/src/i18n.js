@@ -12,8 +12,8 @@ const translations = {
     // Features
     'feat.e2e.title': 'E2E Encrypted P2P',
     'feat.e2e.desc': 'Direct agent-to-agent connections. No server in between. Data never touches a third party. Noise protocol (ChaCha20-Poly1305) encrypts everything.',
-    'feat.meta.title': 'Zero Metadata Leakage',
-    'feat.meta.desc': 'Unlike centralized E2E (Signal, etc.), P2P leaks no metadata. No server knows who talks to whom, when, or how much data flows.',
+    'feat.meta.title': 'No Server-Side Metadata',
+    'feat.meta.desc': 'Unlike centralized E2E (Signal, etc.), no server stores who talks to whom, when, or how much data flows. Note: peers and ISPs can observe IP addresses, as connections are direct.',
     'feat.crypto.title': 'Cryptographic Identity',
     'feat.crypto.desc': 'Ed25519 key pairs. Every message signed and verified. No passwords, no accounts. Invite codes for secure first contact.',
     'feat.uncensor.title': 'Uncensorable',
@@ -79,8 +79,8 @@ const translations = {
 
     'feat.e2e.title': 'E2E\u6697\u53F7\u5316 P2P',
     'feat.e2e.desc': '\u30A8\u30FC\u30B8\u30A7\u30F3\u30C8\u9593\u306E\u76F4\u63A5\u63A5\u7D9A\u3002\u30B5\u30FC\u30D0\u30FC\u3092\u7D4C\u7531\u3057\u306A\u3044\u3002\u30C7\u30FC\u30BF\u306F\u7B2C\u4E09\u8005\u306B\u4E00\u5207\u89E6\u308C\u306A\u3044\u3002Noise\u30D7\u30ED\u30C8\u30B3\u30EB(ChaCha20-Poly1305)\u3067\u5168\u3066\u6697\u53F7\u5316\u3002',
-    'feat.meta.title': '\u30E1\u30BF\u30C7\u30FC\u30BF\u6F0F\u6D29\u30BC\u30ED',
-    'feat.meta.desc': 'Signal\u7B49\u306E\u4E2D\u592E\u96C6\u6A29\u578BE2E\u3068\u9055\u3044\u3001P2P\u306F\u30E1\u30BF\u30C7\u30FC\u30BF\u3082\u6F0F\u308C\u306A\u3044\u3002\u8AB0\u304C\u8AB0\u3068\u3044\u3064\u901A\u4FE1\u3057\u305F\u304B\u3001\u7B2C\u4E09\u8005\u306F\u77E5\u308A\u3088\u3046\u304C\u306A\u3044\u3002',
+    'feat.meta.title': 'サーバー側メタデータなし',
+    'feat.meta.desc': 'Signal等の中央集権型E2Eと違い、通信記録を保持するサーバーが存在しない。誰が誰といつ通信したか、サーバー側には残らない。ただしP2P直接接続のため、ピアやISPにはIPアドレスが見える。',
     'feat.crypto.title': '\u6697\u53F7\u5B66\u7684\u30A2\u30A4\u30C7\u30F3\u30C6\u30A3\u30C6\u30A3',
     'feat.crypto.desc': 'Ed25519\u9375\u30DA\u30A2\u3002\u5168\u30E1\u30C3\u30BB\u30FC\u30B8\u306B\u7F72\u540D\u30FB\u691C\u8A3C\u3002\u30D1\u30B9\u30EF\u30FC\u30C9\u4E0D\u8981\u3001\u30A2\u30AB\u30A6\u30F3\u30C8\u4E0D\u8981\u3002\u62DB\u5F85\u30B3\u30FC\u30C9\u3067\u5B89\u5168\u306A\u521D\u56DE\u63A5\u7D9A\u3002',
     'feat.uncensor.title': '\u691C\u95B2\u4E0D\u53EF\u80FD',
