@@ -41,5 +41,5 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: E2E tests
-        run: npm run test:e2e
+      # E2E tests require Hyperswarm DHT (P2P network) which is not
+      # available in CI runners. Run locally: npm run test:e2e
