@@ -1,11 +1,12 @@
 /**
- * P2P Agent Core — ties together P2P swarm, crypto, state machine, and storage.
+ * P2P Agent Core — runtime for peer connectivity, signed messaging, task flows,
+ * file exchange, and persisted local state.
  *
  * Each agent instance:
- *   - Has an Ed25519 key pair for signing
+ *   - Manages an Ed25519 key pair for signing and verification
  *   - Connects to the Hyperswarm P2P network
  *   - Exchanges signed messages and files with peers
- *   - Stores all state locally (in-memory for MVP, file/DB later)
+ *   - Tracks local workflow state, including legacy billing records
  */
 
 import { createHash, randomBytes } from "crypto";
@@ -148,7 +149,7 @@ export class P2PAgent extends EventEmitter {
   }
 
   // ============================================================
-  // Message Operations (exposed as MCP tools)
+  // Billing Operations (legacy)
   // ============================================================
 
   /** Issue an invoice and send to target agent via P2P */
@@ -271,7 +272,7 @@ export class P2PAgent extends EventEmitter {
   }
 
   // ============================================================
-  // Query (exposed as MCP tools)
+  // Query and Introspection
   // ============================================================
 
   getInvoice(invoiceId: string) {

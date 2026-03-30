@@ -109,73 +109,6 @@ const TOOLS = [
     inputSchema: { type: "object" as const, properties: {} },
   },
   {
-    name: "invoice_issue",
-    description:
-      "Issue a new invoice and send it to a target agent via P2P. The invoice is signed with Ed25519 and sent through Hyperswarm (NAT-traversing P2P).",
-    inputSchema: {
-      type: "object" as const,
-      required: ["target_agent_id", "invoice"],
-      properties: {
-        target_agent_id: {
-          type: "string",
-          description:
-            "Target agent ID (e.g. agent:vendorx:ap). Must be in the same P2P namespace.",
-        },
-        invoice: {
-          type: "object",
-          description:
-            "Invoice payload with meta (invoice_id, currency) and data (invoice_number, issue_date, due_date, seller, buyer, line_items, subtotal, tax_total, total, payment_terms).",
-        },
-      },
-    },
-  },
-  {
-    name: "invoice_status",
-    description:
-      "Get the current state and audit trail of a specific invoice by ID",
-    inputSchema: {
-      type: "object" as const,
-      required: ["invoice_id"],
-      properties: {
-        invoice_id: { type: "string", description: "Invoice ID" },
-      },
-    },
-  },
-  {
-    name: "invoice_list",
-    description: "List all invoices with their current states",
-    inputSchema: { type: "object" as const, properties: {} },
-  },
-  {
-    name: "invoice_accept",
-    description:
-      "Accept a validated invoice and optionally schedule a payment date. Sends accept message back to the issuer via P2P.",
-    inputSchema: {
-      type: "object" as const,
-      required: ["invoice_id"],
-      properties: {
-        invoice_id: { type: "string" },
-        scheduled_payment_date: {
-          type: "string",
-          description: "Payment date (YYYY-MM-DD)",
-        },
-      },
-    },
-  },
-  {
-    name: "invoice_reject",
-    description: "Reject an invoice with a reason code and message",
-    inputSchema: {
-      type: "object" as const,
-      required: ["invoice_id", "reason_code", "reason_message"],
-      properties: {
-        invoice_id: { type: "string" },
-        reason_code: { type: "string" },
-        reason_message: { type: "string" },
-      },
-    },
-  },
-  {
     name: "task_request",
     description:
       "Request a task from a target peer in the P2P marketplace.",
@@ -380,6 +313,73 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "invoice_issue",
+    description:
+      "Issue a new invoice and send it to a target agent via P2P. The invoice is signed with Ed25519 and sent through Hyperswarm (NAT-traversing P2P).",
+    inputSchema: {
+      type: "object" as const,
+      required: ["target_agent_id", "invoice"],
+      properties: {
+        target_agent_id: {
+          type: "string",
+          description:
+            "Target agent ID (e.g. agent:vendorx:ap). Must be in the same P2P namespace.",
+        },
+        invoice: {
+          type: "object",
+          description:
+            "Invoice payload with meta (invoice_id, currency) and data (invoice_number, issue_date, due_date, seller, buyer, line_items, subtotal, tax_total, total, payment_terms).",
+        },
+      },
+    },
+  },
+  {
+    name: "invoice_status",
+    description:
+      "Get the current state and audit trail of a specific invoice by ID",
+    inputSchema: {
+      type: "object" as const,
+      required: ["invoice_id"],
+      properties: {
+        invoice_id: { type: "string", description: "Invoice ID" },
+      },
+    },
+  },
+  {
+    name: "invoice_list",
+    description: "List all invoices with their current states",
+    inputSchema: { type: "object" as const, properties: {} },
+  },
+  {
+    name: "invoice_accept",
+    description:
+      "Accept a validated invoice and optionally schedule a payment date. Sends accept message back to the issuer via P2P.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["invoice_id"],
+      properties: {
+        invoice_id: { type: "string" },
+        scheduled_payment_date: {
+          type: "string",
+          description: "Payment date (YYYY-MM-DD)",
+        },
+      },
+    },
+  },
+  {
+    name: "invoice_reject",
+    description: "Reject an invoice with a reason code and message",
+    inputSchema: {
+      type: "object" as const,
+      required: ["invoice_id", "reason_code", "reason_message"],
+      properties: {
+        invoice_id: { type: "string" },
+        reason_code: { type: "string" },
+        reason_message: { type: "string" },
+      },
+    },
+  },
 ];
 
 // --- Main ---
@@ -422,38 +422,6 @@ async function main() {
 
         case "peer_list":
           data = await daemonGet("/peers");
-          break;
-
-        case "invoice_issue":
-          data = await daemonPost("/invoices/issue", {
-            target_agent_id: args?.target_agent_id,
-            invoice: args?.invoice,
-          });
-          break;
-
-        case "invoice_status":
-          data = await daemonGet(
-            `/invoices?invoice_id=${encodeURIComponent(args?.invoice_id as string)}`
-          );
-          break;
-
-        case "invoice_list":
-          data = await daemonGet("/invoices");
-          break;
-
-        case "invoice_accept":
-          data = await daemonPost("/invoices/accept", {
-            invoice_id: args?.invoice_id,
-            scheduled_payment_date: args?.scheduled_payment_date,
-          });
-          break;
-
-        case "invoice_reject":
-          data = await daemonPost("/invoices/reject", {
-            invoice_id: args?.invoice_id,
-            reason_code: args?.reason_code,
-            reason_message: args?.reason_message,
-          });
           break;
 
         case "task_request":
@@ -583,6 +551,38 @@ async function main() {
           data = await daemonGet(`/audit${qp}`);
           break;
         }
+
+        case "invoice_issue":
+          data = await daemonPost("/invoices/issue", {
+            target_agent_id: args?.target_agent_id,
+            invoice: args?.invoice,
+          });
+          break;
+
+        case "invoice_status":
+          data = await daemonGet(
+            `/invoices?invoice_id=${encodeURIComponent(args?.invoice_id as string)}`
+          );
+          break;
+
+        case "invoice_list":
+          data = await daemonGet("/invoices");
+          break;
+
+        case "invoice_accept":
+          data = await daemonPost("/invoices/accept", {
+            invoice_id: args?.invoice_id,
+            scheduled_payment_date: args?.scheduled_payment_date,
+          });
+          break;
+
+        case "invoice_reject":
+          data = await daemonPost("/invoices/reject", {
+            invoice_id: args?.invoice_id,
+            reason_code: args?.reason_code,
+            reason_message: args?.reason_message,
+          });
+          break;
 
         default:
           data = { error: `Unknown tool: ${name}` };

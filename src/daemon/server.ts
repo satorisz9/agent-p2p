@@ -219,6 +219,8 @@ function createDaemonApi(
         return;
       }
 
+      // --- Billing (legacy) routes ---
+
       if (req.method === "GET" && path === "/invoices") {
         const invoiceId = url.searchParams.get("invoice_id");
         if (invoiceId) {
