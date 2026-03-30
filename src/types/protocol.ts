@@ -650,6 +650,56 @@ export interface MatchResult {
 }
 
 // ============================================================
+// Task Security — Policy & Scanning
+// ============================================================
+
+/** Worker-side policy: what tasks are allowed */
+export interface TaskPolicy {
+  /** Allowed task types (e.g. ["code_review", "generate"]) */
+  allowed_types: string[];
+  /** Paths that must never be accessed */
+  blocked_paths: string[];
+  /** Environment variable patterns to block (glob) */
+  blocked_env_patterns: string[];
+  /** Whether outbound network access is permitted */
+  allow_outbound_network: boolean;
+  /** Maximum output size in bytes */
+  max_output_bytes: number;
+  /** If true, log threats but don't block (audit mode) */
+  scan_only?: boolean;
+}
+
+/** Threat category detected by scanner */
+export type ThreatCategory =
+  | "credential_access"
+  | "command_injection"
+  | "data_exfiltration"
+  | "path_traversal"
+  | "destructive_command";
+
+/** A single detected threat */
+export interface ThreatEntry {
+  category: ThreatCategory;
+  pattern: string;
+  matched_text: string;
+  location: string; // "description" | "input.foo.bar"
+}
+
+/** Result of scanning a task */
+export interface TaskScanResult {
+  safe: boolean;
+  threats: ThreatEntry[];
+}
+
+/** Result of policy + scan check */
+export interface TaskCheckResult {
+  allowed: boolean;
+  reason?: string;
+  threats?: ThreatEntry[];
+  scan_only?: boolean;
+}
+
+// ============================================================
 // Bidding / Marketplace — Decentralized Work Market
 // ============================================================
 

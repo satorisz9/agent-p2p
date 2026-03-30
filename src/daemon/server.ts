@@ -40,6 +40,7 @@ import { ExecutionVerifier } from "../lib/verification/prover";
 import { EconomicManager } from "../lib/economic/wallet";
 import { ProfileManager } from "../lib/matching/profile";
 import { WorkspaceIntrospector } from "../lib/matching/introspect";
+import { TaskPolicyManager } from "../lib/security/policy";
 import type {
   AgentId,
   AuctionRecord,
@@ -184,7 +185,8 @@ function createDaemonApi(
   auction: AuctionManager,
   auctionOrigins: Map<string, AgentId>,
   billing: BillingPlugin | null,
-  profileManager: ProfileManager
+  profileManager: ProfileManager,
+  taskPolicy: TaskPolicyManager
 ) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
@@ -778,6 +780,37 @@ function createDaemonApi(
       }
 
       // ============================================================
+      // Security Policy routes
+      // ============================================================
+
+      if (req.method === "GET" && path === "/policy") {
+        json(res, 200, taskPolicy.serialize());
+        return;
+      }
+
+      if (req.method === "POST" && path === "/policy") {
+        const body = JSON.parse(await readBody(req));
+        if (body.policy) taskPolicy.updatePolicy(body.policy);
+        if (body.peer_override) {
+          const { peer_id, ...override } = body.peer_override;
+          if (peer_id) taskPolicy.setPeerOverride(peer_id, override);
+        }
+        json(res, 200, taskPolicy.serialize());
+        return;
+      }
+
+      if (req.method === "POST" && path === "/policy/check") {
+        const body = JSON.parse(await readBody(req));
+        if (!body.from || !body.task) {
+          json(res, 400, { error: "from (AgentId) and task (TaskRequest) are required" });
+          return;
+        }
+        const result = taskPolicy.checkTask(body.from, body.task);
+        json(res, 200, result);
+        return;
+      }
+
+      // ============================================================
       // Profile & Matching routes
       // ============================================================
 
@@ -1157,6 +1190,7 @@ async function main() {
     profileManager,
   });
   const auctionOrigins = new Map<string, AgentId>();
+  const taskPolicy = new TaskPolicyManager(config.agentId);
 
   // Auto-set default peer config when a peer connects (if not already set via invite)
   (agent as any).swarm.on("peer:identified", (peer: any) => {
@@ -1171,6 +1205,17 @@ async function main() {
     console.error(`[Task] ${type} from ${from}: ${payload.task_id || ""}`);
     if (type === "task_broadcast") {
       const broadcast = payload as TaskBroadcast;
+      // Security scan broadcast before registering
+      const broadcastScan = taskPolicy.checkTask(from, {
+        task_id: broadcast.task_id,
+        type: broadcast.type,
+        description: broadcast.description,
+        input: broadcast.input,
+      });
+      if (!broadcastScan.allowed) {
+        console.error(`[Security] BLOCKED broadcast ${broadcast.task_id} from ${from}: ${broadcastScan.reason}`);
+        return;
+      }
       auction.registerBroadcast(broadcast);
       auctionOrigins.set(broadcast.task_id, from);
     } else if (type === "task_bid") {
@@ -1212,6 +1257,19 @@ async function main() {
       if (!perm.allowed) {
         (agent as any).swarm.sendTaskMessage(from, "task_reject", { task_id: payload.task_id, reason: "Not permitted" });
         return;
+      }
+      // Security scan before accepting
+      const scanResult = taskPolicy.checkTask(from, payload);
+      if (!scanResult.allowed) {
+        console.error(`[Security] BLOCKED task ${payload.task_id} from ${from}: ${scanResult.reason}`);
+        (agent as any).swarm.sendTaskMessage(from, "task_reject", {
+          task_id: payload.task_id,
+          reason: `Security policy violation: ${scanResult.reason}`,
+        });
+        return;
+      }
+      if (scanResult.scan_only && scanResult.threats && scanResult.threats.length > 0) {
+        console.error(`[Security] AUDIT task ${payload.task_id} from ${from}: ${scanResult.threats.map((t: any) => t.pattern).join(", ")}`);
       }
       // Store incoming task (preserve original task_id)
       const task = taskManager.storeIncoming(from, payload);
@@ -1331,7 +1389,8 @@ async function main() {
     auction,
     auctionOrigins,
     billing,
-    profileManager
+    profileManager,
+    taskPolicy
   );
 
   // Discovery site integration
