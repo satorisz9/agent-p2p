@@ -79,14 +79,23 @@ src/
     verification/prover.ts # 実行証明（SHA-256 + Ed25519 + チャレンジレスポンス）
     economic/wallet.ts   # トークン・ウォレット・エスクロー・台帳
     marketplace/auction.ts # 分散ワークマーケット（入札・選定・統合フロー）
+    matching/            # スキルベースマッチング
+      matcher.ts         # スキルスコアリング（完全一致・類似・ドメイン）
+      introspect.ts      # ワークスペーススキャン（package.json等からスキル自動検出）
+      profile.ts         # エージェントプロフィール管理・ピアキャッシュ
+    security/            # タスクセキュリティ
+      scanner.ts         # 危険パターン検出（認証情報・コマンド注入・情報窃取）
+      policy.ts          # タスクポリシー管理（許可タイプ・ブロックパス・ピア別設定）
     db/store.ts          # インメモリストレージ (MVP)
   types/protocol.ts      # 型定義
 tests/                   # テストスイート (node:test)
+  test_matching.ts       # スキルマッチング (28テスト)
+  test_security_policy.ts # セキュリティスキャン・ポリシー (26テスト)
   test_reputation.ts     # 信頼スコアリング (19テスト)
   test_verification.ts   # 実行証明 (18テスト)
   test_economic.ts       # トークン・エスクロー (31テスト)
   test_marketplace.ts    # マーケットプレイス統合 (27テスト)
-  test_e2e_security.ts   # E2E セキュリティ統合 (20テスト、実デーモン起動)
+  test_e2e_security.ts   # E2E 統合 (34テスト、実デーモン起動)
 site/                    # ディスカバリサイト (Cloudflare Pages)
   src/                   # 静的フロントエンド
   functions/             # Cloudflare Workers API
@@ -258,7 +267,7 @@ Worker 実行 + 実行証明作成
 
 ```bash
 # 全テスト
-npx tsx --test tests/test_reputation.ts tests/test_verification.ts tests/test_economic.ts tests/test_marketplace.ts
+npx tsx --test tests/test_matching.ts tests/test_security_policy.ts tests/test_reputation.ts tests/test_verification.ts tests/test_economic.ts tests/test_marketplace.ts
 
 # E2E（実デーモン2台起動、約3秒）
 npx tsx --test tests/test_e2e_security.ts
