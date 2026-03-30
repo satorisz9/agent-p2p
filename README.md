@@ -111,7 +111,7 @@ codex -m gpt-5.4 --full-auto -q "use agent-p2p to send data"
 | P2P Network | Hyperswarm (DHT discovery, UDP hole punching) |
 | Encryption | Noise protocol (transport) + Ed25519 (messages) |
 | Validation | AJV JSON Schema + business rules |
-| State Machine | Deterministic invoice lifecycle FSM |
+| State Machine | Deterministic lifecycle FSM (tasks, invoices) |
 | Reputation | Trust scoring from task outcomes, auto permission adjustment |
 | Verification | SHA-256 hashes + Ed25519 proofs + challenge-response |
 | Economic | Token issuance, escrow, hash-chain ledger |

@@ -63,7 +63,7 @@ kill $(cat ~/.agent-p2p/myagent/daemon.pid)
 
 ```
 src/
-  agent/core.ts          # InvoiceAgent — メインオーケストレータ
+  agent/core.ts          # P2PAgent — メインオーケストレータ
   daemon/server.ts       # デーモン (HTTP API + P2P + Discovery)
   mcp/server.ts          # MCP サーバー (Claude Code 連携)
   lib/
@@ -72,7 +72,7 @@ src/
     discovery/client.ts  # ディスカバリサイト API クライアント
     protocol/            # エンベロープ構築
     relay/               # 3層バリデーションパイプライン
-    state/machine.ts     # 請求書ステートマシン
+    state/machine.ts     # ライフサイクルステートマシン
     validation/          # スキーマ・ビジネスルール検証
     reputation/manager.ts # 信頼スコアリング（タスク結果ベース、自動権限調整）
     verification/prover.ts # 実行証明（SHA-256 + Ed25519 + チャレンジレスポンス）
