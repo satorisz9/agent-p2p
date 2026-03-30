@@ -29,6 +29,7 @@ import { randomBytes } from "crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { P2PAgent } from "../agent/core";
+import { BillingPlugin } from "../agent/billing";
 import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
 import { InviteManager } from "../lib/invite/manager";
 import { AuctionManager } from "../lib/marketplace/auction";
@@ -64,6 +65,7 @@ function parseArgs() {
     }
     return args[idx + 1];
   };
+  const has = (flag: string): boolean => args.includes(flag);
 
   return {
     agentId: get("--agent-id") as AgentId,
@@ -73,6 +75,7 @@ function parseArgs() {
     port: parseInt(get("--port", "7700"), 10),
     discoveryUrl: get("--discovery-url", ""),
     description: get("--description", ""),
+    enableBilling: has("--enable-billing"),
   };
 }
 
@@ -177,7 +180,8 @@ function createDaemonApi(
   verifier: ExecutionVerifier,
   economic: EconomicManager,
   auction: AuctionManager,
-  auctionOrigins: Map<string, AgentId>
+  auctionOrigins: Map<string, AgentId>,
+  billing: BillingPlugin | null
 ) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
@@ -196,6 +200,7 @@ function createDaemonApi(
         status: "ok",
         agent_id: agent.getAgentInfo().agent_id,
         uptime: process.uptime(),
+        billing_enabled: billing !== null,
       });
       return;
     }
@@ -210,7 +215,10 @@ function createDaemonApi(
       // --- Routes ---
 
       if (req.method === "GET" && path === "/info") {
-        json(res, 200, agent.getAgentInfo());
+        json(res, 200, {
+          ...agent.getAgentInfo(),
+          billing_enabled: billing !== null,
+        });
         return;
       }
 
@@ -219,49 +227,62 @@ function createDaemonApi(
         return;
       }
 
-      // --- Billing (legacy) routes ---
+      // --- Billing (legacy, optional plugin) routes ---
 
-      if (req.method === "GET" && path === "/invoices") {
-        const invoiceId = url.searchParams.get("invoice_id");
-        if (invoiceId) {
-          const inv = agent.getInvoice(invoiceId);
-          const audit = agent.getAuditLog(invoiceId);
-          json(res, inv ? 200 : 404, { invoice: inv, audit });
-        } else {
-          json(res, 200, agent.listInvoices());
+      if (path === "/audit" || path === "/invoices" || path.startsWith("/invoices/")) {
+        if (!billing) {
+          json(res, 404, { error: "Billing plugin is disabled" });
+          return;
         }
-        return;
-      }
 
-      if (req.method === "POST" && path === "/invoices/issue") {
-        const body = JSON.parse(await readBody(req));
-        const result = agent.issueInvoice(
-          body.target_agent_id as AgentId,
-          body.invoice as InvoiceIssuePayload
-        );
-        json(res, result.success ? 200 : 422, result);
-        return;
-      }
+        if (req.method === "GET" && path === "/invoices") {
+          const invoiceId = url.searchParams.get("invoice_id");
+          if (invoiceId) {
+            const invoice = billing.getInvoice(invoiceId);
+            const audit = billing.getAuditLog(invoiceId);
+            json(res, invoice ? 200 : 404, { invoice, audit });
+          } else {
+            json(res, 200, billing.listInvoices());
+          }
+          return;
+        }
 
-      if (req.method === "POST" && path === "/invoices/accept") {
-        const body = JSON.parse(await readBody(req));
-        const result = agent.acceptInvoice(
-          body.invoice_id,
-          body.scheduled_payment_date
-        );
-        json(res, result.success ? 200 : 422, result);
-        return;
-      }
+        if (req.method === "POST" && path === "/invoices/issue") {
+          const body = JSON.parse(await readBody(req));
+          const result = billing.issueInvoice(
+            body.target_agent_id as AgentId,
+            body.invoice as InvoiceIssuePayload
+          );
+          json(res, result.success ? 200 : 422, result);
+          return;
+        }
 
-      if (req.method === "POST" && path === "/invoices/reject") {
-        const body = JSON.parse(await readBody(req));
-        const result = agent.rejectInvoice(
-          body.invoice_id,
-          body.reason_code,
-          body.reason_message
-        );
-        json(res, result.success ? 200 : 422, result);
-        return;
+        if (req.method === "POST" && path === "/invoices/accept") {
+          const body = JSON.parse(await readBody(req));
+          const result = billing.acceptInvoice(
+            body.invoice_id,
+            body.scheduled_payment_date
+          );
+          json(res, result.success ? 200 : 422, result);
+          return;
+        }
+
+        if (req.method === "POST" && path === "/invoices/reject") {
+          const body = JSON.parse(await readBody(req));
+          const result = billing.rejectInvoice(
+            body.invoice_id,
+            body.reason_code,
+            body.reason_message
+          );
+          json(res, result.success ? 200 : 422, result);
+          return;
+        }
+
+        if (req.method === "GET" && path === "/audit") {
+          const invoiceId = url.searchParams.get("invoice_id") ?? undefined;
+          json(res, 200, billing.getAuditLog(invoiceId));
+          return;
+        }
       }
 
       if (req.method === "GET" && path === "/inbox") {
@@ -298,12 +319,6 @@ function createDaemonApi(
         } catch {
           json(res, 200, { files: [], directory: dir });
         }
-        return;
-      }
-
-      if (req.method === "GET" && path === "/audit") {
-        const invoiceId = url.searchParams.get("invoice_id") ?? undefined;
-        json(res, 200, agent.getAuditLog(invoiceId));
         return;
       }
 
@@ -1056,6 +1071,8 @@ async function main() {
   });
 
   await agent.start();
+  const billing = config.enableBilling ? new BillingPlugin(agent) : null;
+  billing?.start();
   const inviteManager = new InviteManager(config.agentId);
   const taskManager = new TaskManager(config.agentId, ["generic", "code_review", "run_tests", "transform"], 5);
   const reputation = new ReputationManager();
@@ -1235,7 +1252,8 @@ async function main() {
     verifier,
     economic,
     auction,
-    auctionOrigins
+    auctionOrigins,
+    billing
   );
 
   // Discovery site integration
@@ -1302,6 +1320,7 @@ async function main() {
     reputation.destroy();
     verifier.destroy();
     economic.destroy();
+    billing?.stop();
     await inviteManager.destroy();
     httpServer.close();
     await agent.stop();

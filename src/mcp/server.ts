@@ -94,9 +94,18 @@ async function daemonPost(path: string, body: unknown): Promise<unknown> {
   return res.json();
 }
 
+async function isBillingEnabled(): Promise<boolean> {
+  try {
+    const info = (await daemonGet("/info")) as { billing_enabled?: boolean };
+    return info.billing_enabled === true;
+  } catch {
+    return false;
+  }
+}
+
 // --- MCP Tool Definitions ---
 
-const TOOLS = [
+const BASE_TOOLS = [
   {
     name: "agent_info",
     description:
@@ -288,7 +297,21 @@ const TOOLS = [
       },
     },
   },
-  // --- Billing (legacy invoice protocol) ---
+  {
+    name: "inbox_list",
+    description:
+      "List unprocessed messages in the inbox (received via P2P but not yet validated/processed)",
+    inputSchema: { type: "object" as const, properties: {} },
+  },
+  {
+    name: "inbox_process",
+    description:
+      "Process the next unprocessed message from the inbox. Validates signature, schema, and business rules, then applies the state transition.",
+    inputSchema: { type: "object" as const, properties: {} },
+  },
+];
+
+const BILLING_TOOLS = [
   {
     name: "invoice_issue",
     description:
@@ -357,18 +380,6 @@ const TOOLS = [
     },
   },
   {
-    name: "inbox_list",
-    description:
-      "List unprocessed messages in the inbox (received via P2P but not yet validated/processed)",
-    inputSchema: { type: "object" as const, properties: {} },
-  },
-  {
-    name: "inbox_process",
-    description:
-      "Process the next unprocessed message from the inbox. Validates signature, schema, and business rules, then applies the state transition.",
-    inputSchema: { type: "object" as const, properties: {} },
-  },
-  {
     name: "audit_log",
     description: "View audit trail, optionally filtered by invoice ID",
     inputSchema: {
@@ -382,6 +393,46 @@ const TOOLS = [
     },
   },
 ];
+
+async function listTools() {
+  return (await isBillingEnabled())
+    ? [...BASE_TOOLS, ...BILLING_TOOLS]
+    : BASE_TOOLS;
+}
+
+async function listResources() {
+  const resources = [
+    {
+      uri: "agent://identity",
+      name: "Agent Identity",
+      description: "Agent ID, public key, connection info",
+      mimeType: "application/json",
+    },
+    {
+      uri: "agent://tasks",
+      name: "Tracked Tasks",
+      description: "All tracked marketplace tasks and their statuses",
+      mimeType: "application/json",
+    },
+    {
+      uri: "agent://reputation",
+      name: "Reputation Records",
+      description: "Known reputation records for agents in the marketplace",
+      mimeType: "application/json",
+    },
+  ];
+
+  if (await isBillingEnabled()) {
+    resources.splice(1, 0, {
+      uri: "agent://invoices",
+      name: "All Invoices",
+      description: "All invoices and their states",
+      mimeType: "application/json",
+    });
+  }
+
+  return resources;
+}
 
 // --- Main ---
 
@@ -406,7 +457,7 @@ async function main() {
 
   // --- List Tools ---
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOLS,
+    tools: await listTools(),
   }));
 
   // --- Call Tool ---
@@ -546,6 +597,9 @@ async function main() {
           break;
 
         case "audit_log": {
+          if (!(await isBillingEnabled())) {
+            throw new Error("Billing plugin is disabled on the daemon");
+          }
           const qp = args?.invoice_id
             ? `?invoice_id=${encodeURIComponent(args.invoice_id as string)}`
             : "";
@@ -554,6 +608,9 @@ async function main() {
         }
 
         case "invoice_issue":
+          if (!(await isBillingEnabled())) {
+            throw new Error("Billing plugin is disabled on the daemon");
+          }
           data = await daemonPost("/invoices/issue", {
             target_agent_id: args?.target_agent_id,
             invoice: args?.invoice,
@@ -561,16 +618,25 @@ async function main() {
           break;
 
         case "invoice_status":
+          if (!(await isBillingEnabled())) {
+            throw new Error("Billing plugin is disabled on the daemon");
+          }
           data = await daemonGet(
             `/invoices?invoice_id=${encodeURIComponent(args?.invoice_id as string)}`
           );
           break;
 
         case "invoice_list":
+          if (!(await isBillingEnabled())) {
+            throw new Error("Billing plugin is disabled on the daemon");
+          }
           data = await daemonGet("/invoices");
           break;
 
         case "invoice_accept":
+          if (!(await isBillingEnabled())) {
+            throw new Error("Billing plugin is disabled on the daemon");
+          }
           data = await daemonPost("/invoices/accept", {
             invoice_id: args?.invoice_id,
             scheduled_payment_date: args?.scheduled_payment_date,
@@ -578,6 +644,9 @@ async function main() {
           break;
 
         case "invoice_reject":
+          if (!(await isBillingEnabled())) {
+            throw new Error("Billing plugin is disabled on the daemon");
+          }
           data = await daemonPost("/invoices/reject", {
             invoice_id: args?.invoice_id,
             reason_code: args?.reason_code,
@@ -612,32 +681,7 @@ async function main() {
 
   // --- Resources ---
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [
-      {
-        uri: "agent://identity",
-        name: "Agent Identity",
-        description: "Agent ID, public key, connection info",
-        mimeType: "application/json",
-      },
-      {
-        uri: "agent://invoices",
-        name: "All Invoices",
-        description: "All invoices and their states",
-        mimeType: "application/json",
-      },
-      {
-        uri: "agent://tasks",
-        name: "Tracked Tasks",
-        description: "All tracked marketplace tasks and their statuses",
-        mimeType: "application/json",
-      },
-      {
-        uri: "agent://reputation",
-        name: "Reputation Records",
-        description: "Known reputation records for agents in the marketplace",
-        mimeType: "application/json",
-      },
-    ],
+    resources: await listResources(),
   }));
 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
@@ -649,6 +693,9 @@ async function main() {
         data = await daemonGet("/info");
         break;
       case "agent://invoices":
+        if (!(await isBillingEnabled())) {
+          throw new Error("Billing plugin is disabled on the daemon");
+        }
         data = await daemonGet("/invoices");
         break;
       case "agent://tasks":

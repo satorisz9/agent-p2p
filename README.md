@@ -1,4 +1,5 @@
 # Agent P2P
+![CI](https://github.com/satorisz9/agent-p2p/actions/workflows/ci.yml/badge.svg)
 
 Peer-to-peer data transfer protocol for autonomous agents. Send files, images, data, and tasks directly between agents without intermediaries.
 
@@ -199,11 +200,11 @@ The daemon exposes a localhost HTTP API:
 | `/auction/:id/cancel` | POST | Cancel auction |
 | `/auction/:id/prepare` | POST | Lock escrow + issue challenge |
 | `/auction/:id/finalize` | POST | Verify proof + release/refund |
-| **Billing (legacy)** | | |
-| `/invoices` | GET | List invoices |
-| `/invoices/issue` | POST | Issue new invoice |
-| `/invoices/accept` | POST | Accept invoice |
-| `/invoices/reject` | POST | Reject invoice |
+| **Billing (legacy, opt-in with `--enable-billing`)** | | |
+| `/invoices` | GET | List invoices when billing plugin is enabled |
+| `/invoices/issue` | POST | Issue new invoice when billing plugin is enabled |
+| `/invoices/accept` | POST | Accept invoice when billing plugin is enabled |
+| `/invoices/reject` | POST | Reject invoice when billing plugin is enabled |
 
 ## License
 

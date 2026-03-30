@@ -6,7 +6,7 @@
  *   - Manages an Ed25519 key pair for signing and verification
  *   - Connects to the Hyperswarm P2P network
  *   - Exchanges signed messages and files with peers
- *   - Tracks local workflow state, including legacy billing records
+ *   - Tracks local workflow state for the core runtime
  */
 
 import { createHash, randomBytes } from "crypto";
@@ -29,19 +29,12 @@ import {
   type EncryptedKey,
 } from "../lib/crypto/keystore";
 import { validatePayload } from "../lib/validation/schemas";
-import {
-  BillingService,
-  type BillingAuditEntry,
-  type BillingInvoiceRecord,
-} from "./billing";
 
 import type {
   AgentId,
   OrgId,
   SignedMessage,
   Envelope,
-  InvoiceIssuePayload,
-  InvoiceState,
   MessageType,
   AgentRegistryEntry,
 } from "../types/protocol";
@@ -56,10 +49,8 @@ interface AgentState {
   privateKey: string; // base64 (plaintext fallback, cleared when encrypted)
   encryptedPrivateKey?: EncryptedKey; // AES-256-GCM encrypted private key
   namespace: string;
-  invoices: Record<string, BillingInvoiceRecord>;
   inbox: SignedMessage[];
   knownPeers: Record<string, { publicKey: string; agentId: AgentId }>;
-  auditLog: BillingAuditEntry[];
 }
 
 export interface AgentConfig {
@@ -73,7 +64,6 @@ export class P2PAgent extends EventEmitter {
   private state!: AgentState;
   private keys!: KeyPair;
   private swarm!: P2PSwarm;
-  private billing: BillingService;
   private config: AgentConfig;
   private stateFile: string;
 
@@ -81,14 +71,6 @@ export class P2PAgent extends EventEmitter {
     super();
     this.config = config;
     this.stateFile = join(config.dataDir, "agent-state.json");
-    this.billing = new BillingService({
-      agentId: this.config.agentId,
-      getState: () => this.state,
-      sendMessage: (targetAgentId, message) => this.swarm.sendMessage(targetAgentId, message),
-      buildEnvelope: (params, payload) => this.buildEnvelope(params, payload),
-      audit: (event, invoiceId, details = {}) => this.audit(event, invoiceId, details),
-      saveState: () => this.saveState(),
-    });
   }
 
   // ============================================================
@@ -147,23 +129,10 @@ export class P2PAgent extends EventEmitter {
     await this.swarm?.stop();
   }
 
-  // ============================================================
-  // Billing Operations (legacy)
-  // ============================================================
-
-  /** Issue an invoice and send to target agent via P2P */
-  issueInvoice(
-    targetAgentId: AgentId,
-    invoicePayload: InvoiceIssuePayload
-  ): { success: boolean; messageId?: string; error?: string } {
-    return this.billing.issueInvoice(targetAgentId, invoicePayload);
-  }
-
   /** Process the next message in the inbox */
   processNextInboxMessage(): {
     processed: boolean;
     action?: string;
-    invoiceId?: string;
     details?: unknown;
   } {
     if (this.state.inbox.length === 0) {
@@ -176,34 +145,9 @@ export class P2PAgent extends EventEmitter {
     return result;
   }
 
-  /** Accept an invoice manually */
-  acceptInvoice(
-    invoiceId: string,
-    scheduledPaymentDate?: string
-  ): { success: boolean; error?: string } {
-    return this.billing.acceptInvoice(invoiceId, scheduledPaymentDate);
-  }
-
-  /** Reject an invoice */
-  rejectInvoice(
-    invoiceId: string,
-    reasonCode: string,
-    reasonMessage: string
-  ): { success: boolean; error?: string } {
-    return this.billing.rejectInvoice(invoiceId, reasonCode, reasonMessage);
-  }
-
   // ============================================================
   // Query and Introspection
   // ============================================================
-
-  getInvoice(invoiceId: string) {
-    return this.billing.getInvoice(invoiceId);
-  }
-
-  listInvoices() {
-    return this.billing.listInvoices();
-  }
 
   getInbox() {
     return this.state.inbox.map((msg) => ({
@@ -222,13 +166,6 @@ export class P2PAgent extends EventEmitter {
     }));
   }
 
-  getAuditLog(invoiceId?: string) {
-    if (invoiceId) {
-      return this.state.auditLog.filter((e) => e.invoiceId === invoiceId);
-    }
-    return this.state.auditLog.slice(-50); // last 50
-  }
-
   getAgentInfo() {
     return {
       agent_id: this.config.agentId,
@@ -237,7 +174,6 @@ export class P2PAgent extends EventEmitter {
       namespace: this.config.namespace,
       connected_peers: this.swarm.getConnectedPeers().length,
       inbox_count: this.state.inbox.length,
-      invoice_count: Object.keys(this.state.invoices).length,
     };
   }
 
@@ -271,6 +207,43 @@ export class P2PAgent extends EventEmitter {
     return this.state.privateKey;
   }
 
+  getDataDir(): string {
+    return this.config.dataDir;
+  }
+
+  createSignedMessage(
+    params: {
+      to: AgentId;
+      messageType: MessageType;
+      threadId: string;
+      idempotencyKey: string;
+      replyToMessageId?: string;
+    },
+    payload: unknown
+  ): SignedMessage {
+    return {
+      envelope: this.buildEnvelope(params, payload),
+      payload,
+    };
+  }
+
+  sendSignedMessage(targetAgentId: AgentId, message: SignedMessage): boolean {
+    return this.swarm.sendMessage(targetAgentId, message);
+  }
+
+  acknowledgeInboxMessage(messageId: string): boolean {
+    const index = this.state.inbox.findIndex(
+      (message) => message.envelope.message_id === messageId
+    );
+    if (index === -1) {
+      return false;
+    }
+
+    this.state.inbox.splice(index, 1);
+    this.saveState();
+    return true;
+  }
+
   // ============================================================
   // Internal
   // ============================================================
@@ -278,7 +251,6 @@ export class P2PAgent extends EventEmitter {
   private processMessage(message: SignedMessage): {
     processed: boolean;
     action?: string;
-    invoiceId?: string;
     details?: unknown;
   } {
     const { envelope, payload } = message;
@@ -306,18 +278,11 @@ export class P2PAgent extends EventEmitter {
       };
     }
 
-    // Handle by message type
-    switch (envelope.message_type) {
-      case "invoice.issue":
-        return this.billing.handleInvoiceIssue(envelope, payload as InvoiceIssuePayload);
-      case "invoice.accept":
-      case "invoice.reject":
-      case "invoice.request_fix":
-      case "payment.notice":
-        return this.billing.handleStateUpdate(envelope, payload);
-      default:
-        return { processed: true, action: "ignored", details: `Unknown type: ${envelope.message_type}` };
-    }
+    return {
+      processed: true,
+      action: "ignored",
+      details: `No core handler for type: ${envelope.message_type}`,
+    };
   }
 
   private handleIncomingMessage(message: SignedMessage, fromAgentId?: AgentId): void {
@@ -366,15 +331,6 @@ export class P2PAgent extends EventEmitter {
     return envelope;
   }
 
-  private audit(event: string, invoiceId?: string, details: Record<string, unknown> = {}): void {
-    this.state.auditLog.push({
-      timestamp: new Date().toISOString(),
-      event,
-      invoiceId,
-      details,
-    });
-  }
-
   private deriveSeed(): Buffer {
     // Deterministic seed from agent ID + private key
     return createHash("sha256")
@@ -386,8 +342,18 @@ export class P2PAgent extends EventEmitter {
     const passphrase = getPassphrase();
 
     if (existsSync(this.stateFile)) {
-      const raw = readFileSync(this.stateFile, "utf8");
-      this.state = JSON.parse(raw);
+      const raw = JSON.parse(readFileSync(this.stateFile, "utf8")) as Partial<AgentState>;
+      this.state = {
+        agentId: (raw.agentId ?? this.config.agentId) as AgentId,
+        orgId: (raw.orgId ?? this.config.orgId) as OrgId,
+        keyId: raw.keyId ?? `key_${Date.now()}`,
+        publicKey: raw.publicKey ?? "",
+        privateKey: raw.privateKey ?? "",
+        encryptedPrivateKey: raw.encryptedPrivateKey,
+        namespace: raw.namespace ?? this.config.namespace,
+        inbox: Array.isArray(raw.inbox) ? raw.inbox : [],
+        knownPeers: raw.knownPeers ?? {},
+      };
 
       // Decrypt private key if encrypted
       if (this.state.encryptedPrivateKey) {
@@ -431,10 +397,8 @@ export class P2PAgent extends EventEmitter {
       publicKey: toBase64(keys.publicKey),
       privateKey: toBase64(keys.privateKey),
       namespace: this.config.namespace,
-      invoices: {},
       inbox: [],
       knownPeers: {},
-      auditLog: [],
     };
 
     if (!passphrase) {

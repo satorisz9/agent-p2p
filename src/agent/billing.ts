@@ -1,5 +1,12 @@
-import { validateBusinessRules } from "../lib/validation/business";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+
 import { transition } from "../lib/state/machine";
+import { validateBusinessRules } from "../lib/validation/business";
+import { validatePayload } from "../lib/validation/schemas";
+import { computePayloadHash } from "../lib/crypto/signing";
+
+import { P2PAgent } from "./core";
 
 import type {
   AgentId,
@@ -29,68 +36,80 @@ export interface BillingState {
   auditLog: BillingAuditEntry[];
 }
 
-interface BillingEnvelopeParams {
-  to: AgentId;
-  messageType: MessageType;
-  threadId: string;
-  idempotencyKey: string;
-  replyToMessageId?: string;
-}
+const BILLING_MESSAGE_TYPES = new Set<MessageType>([
+  "invoice.issue",
+  "invoice.accept",
+  "invoice.reject",
+  "invoice.request_fix",
+  "payment.notice",
+]);
 
-interface BillingServiceDeps {
-  agentId: AgentId;
-  getState: () => BillingState;
-  sendMessage: (targetAgentId: AgentId, message: SignedMessage) => boolean;
-  buildEnvelope: (params: BillingEnvelopeParams, payload: unknown) => Envelope;
-  audit: (event: string, invoiceId?: string, details?: Record<string, unknown>) => void;
-  saveState: () => void;
-}
+export class BillingPlugin {
+  private state: BillingState = {
+    invoices: {},
+    auditLog: [],
+  };
+  private readonly stateFile: string;
+  private readonly handleInboxMessageBound: (message: SignedMessage) => void;
 
-export class BillingService {
-  constructor(private readonly deps: BillingServiceDeps) {}
+  constructor(private readonly agent: P2PAgent) {
+    this.stateFile = join(this.agent.getDataDir(), "billing-state.json");
+    this.handleInboxMessageBound = (message) => {
+      this.handleInboxMessage(message);
+    };
+  }
+
+  start(): void {
+    this.loadOrCreateState();
+    this.agent.on("inbox:new", this.handleInboxMessageBound);
+  }
+
+  stop(): void {
+    this.agent.off("inbox:new", this.handleInboxMessageBound);
+    this.saveState();
+  }
 
   issueInvoice(
     targetAgentId: AgentId,
     invoicePayload: InvoiceIssuePayload
   ): { success: boolean; messageId?: string; error?: string } {
-    const state = this.deps.getState();
     const invoiceId = invoicePayload.meta.invoice_id;
+    const message = this.agent.createSignedMessage(
+      {
+        to: targetAgentId,
+        messageType: "invoice.issue",
+        threadId: `thr_${invoiceId}`,
+        idempotencyKey: `issue-${invoiceId}-v1`,
+      },
+      invoicePayload
+    );
 
-    const envelope = this.deps.buildEnvelope({
-      to: targetAgentId,
-      messageType: "invoice.issue",
-      threadId: `thr_${invoiceId}`,
-      idempotencyKey: `issue-${invoiceId}-v1`,
-    }, invoicePayload);
-
-    const message: SignedMessage = { envelope, payload: invoicePayload };
-    const sent = this.deps.sendMessage(targetAgentId, message);
+    const sent = this.agent.sendSignedMessage(targetAgentId, message);
     if (!sent) {
       return {
         success: false,
         error: `Peer ${targetAgentId} not connected. Message queued for retry.`,
-        messageId: envelope.message_id,
+        messageId: message.envelope.message_id,
       };
     }
 
-    state.invoices[invoiceId] = {
+    this.state.invoices[invoiceId] = {
       state: "issued",
       payload: invoicePayload,
-      lastMessageId: envelope.message_id,
+      lastMessageId: message.envelope.message_id,
       updatedAt: new Date().toISOString(),
     };
-    this.deps.audit("invoice.issued", invoiceId, { to: targetAgentId });
-    this.deps.saveState();
+    this.audit("invoice.issued", invoiceId, { to: targetAgentId });
+    this.saveState();
 
-    return { success: true, messageId: envelope.message_id };
+    return { success: true, messageId: message.envelope.message_id };
   }
 
   acceptInvoice(
     invoiceId: string,
     scheduledPaymentDate?: string
   ): { success: boolean; error?: string } {
-    const state = this.deps.getState();
-    const invoice = state.invoices[invoiceId];
+    const invoice = this.state.invoices[invoiceId];
     if (!invoice) {
       return { success: false, error: "Invoice not found" };
     }
@@ -107,7 +126,7 @@ export class BillingService {
       meta: { invoice_id: invoiceId, currency: "JPY" as const },
       data: {
         accepted_at: new Date().toISOString(),
-        accepted_by_agent: this.deps.agentId,
+        accepted_by_agent: this.agent.getAgentInfo().agent_id,
         payment_status: "scheduled" as const,
         scheduled_payment_date: scheduledPaymentDate,
       },
@@ -115,17 +134,20 @@ export class BillingService {
 
     const issuerAgentId = this.findIssuerAgent(invoiceId);
     if (issuerAgentId) {
-      const envelope = this.deps.buildEnvelope({
-        to: issuerAgentId,
-        messageType: "invoice.accept",
-        threadId: `thr_${invoiceId}`,
-        idempotencyKey: `accept-${invoiceId}`,
-      }, acceptPayload);
-      this.deps.sendMessage(issuerAgentId, { envelope, payload: acceptPayload });
+      const message = this.agent.createSignedMessage(
+        {
+          to: issuerAgentId,
+          messageType: "invoice.accept",
+          threadId: `thr_${invoiceId}`,
+          idempotencyKey: `accept-${invoiceId}`,
+        },
+        acceptPayload
+      );
+      this.agent.sendSignedMessage(issuerAgentId, message);
     }
 
-    this.deps.audit("invoice.accepted", invoiceId, { scheduledPaymentDate });
-    this.deps.saveState();
+    this.audit("invoice.accepted", invoiceId, { scheduledPaymentDate });
+    this.saveState();
     return { success: true };
   }
 
@@ -134,8 +156,7 @@ export class BillingService {
     reasonCode: string,
     reasonMessage: string
   ): { success: boolean; error?: string } {
-    const state = this.deps.getState();
-    const invoice = state.invoices[invoiceId];
+    const invoice = this.state.invoices[invoiceId];
     if (!invoice) {
       return { success: false, error: "Invoice not found" };
     }
@@ -147,68 +168,125 @@ export class BillingService {
 
     invoice.state = trans.nextState!;
     invoice.updatedAt = new Date().toISOString();
-
-    this.deps.audit("invoice.rejected", invoiceId, { reasonCode, reasonMessage });
-    this.deps.saveState();
+    this.audit("invoice.rejected", invoiceId, { reasonCode, reasonMessage });
+    this.saveState();
     return { success: true };
   }
 
   getInvoice(invoiceId: string): BillingInvoiceRecord | null {
-    const state = this.deps.getState();
-    return state.invoices[invoiceId] ?? null;
+    return this.state.invoices[invoiceId] ?? null;
   }
 
   listInvoices(): Array<{ invoice_id: string; state: InvoiceState; updated_at: string }> {
-    const state = this.deps.getState();
-    return Object.entries(state.invoices).map(([id, invoice]) => ({
-      invoice_id: id,
+    return Object.entries(this.state.invoices).map(([invoiceId, invoice]) => ({
+      invoice_id: invoiceId,
       state: invoice.state,
       updated_at: invoice.updatedAt,
     }));
   }
 
-  handleInvoiceIssue(
+  getAuditLog(invoiceId?: string): BillingAuditEntry[] {
+    if (invoiceId) {
+      return this.state.auditLog.filter((entry) => entry.invoiceId === invoiceId);
+    }
+    return this.state.auditLog.slice(-50);
+  }
+
+  private handleInboxMessage(message: SignedMessage): void {
+    if (!BILLING_MESSAGE_TYPES.has(message.envelope.message_type)) {
+      return;
+    }
+
+    const result = this.processMessage(message);
+    if (result.processed) {
+      this.agent.acknowledgeInboxMessage(message.envelope.message_id);
+      this.saveState();
+    }
+  }
+
+  private processMessage(message: SignedMessage): {
+    processed: boolean;
+    action?: string;
+    details?: unknown;
+  } {
+    const { envelope, payload } = message;
+    const invoiceId = this.getInvoiceId(payload);
+
+    if (computePayloadHash(payload) !== envelope.payload_hash) {
+      this.audit("invoice.rejected", invoiceId, { reason: "Payload hash mismatch" });
+      return {
+        processed: true,
+        action: "rejected",
+        details: "Payload hash mismatch",
+      };
+    }
+
+    const schemaResult = validatePayload(envelope.message_type, payload);
+    if (!schemaResult.valid) {
+      this.audit("invoice.rejected", invoiceId, { reason: "Schema validation failed", errors: schemaResult.errors });
+      return {
+        processed: true,
+        action: "rejected",
+        details: schemaResult.errors,
+      };
+    }
+
+    switch (envelope.message_type) {
+      case "invoice.issue":
+        return this.handleInvoiceIssue(envelope, payload as InvoiceIssuePayload);
+      case "invoice.accept":
+      case "invoice.reject":
+      case "invoice.request_fix":
+      case "payment.notice":
+        return this.handleStateUpdate(envelope, payload);
+      default:
+        return {
+          processed: false,
+          action: "ignored",
+          details: `Unsupported billing type: ${envelope.message_type}`,
+        };
+    }
+  }
+
+  private handleInvoiceIssue(
     envelope: Envelope,
     payload: InvoiceIssuePayload
-  ): { processed: boolean; action: string; invoiceId: string; details: unknown } {
-    const state = this.deps.getState();
+  ): { processed: boolean; action: string; details: unknown } {
     const invoiceId = payload.meta.invoice_id;
 
-    if (state.invoices[invoiceId]) {
+    if (this.state.invoices[invoiceId]) {
       return {
         processed: true,
         action: "rejected_duplicate",
-        invoiceId,
         details: `Invoice ${invoiceId} already exists`,
       };
     }
 
-    const bizResult = validateBusinessRules(payload);
-    if (!bizResult.valid) {
-      state.invoices[invoiceId] = {
+    const businessRuleResult = validateBusinessRules(payload);
+    if (!businessRuleResult.valid) {
+      this.state.invoices[invoiceId] = {
         state: "fix_requested",
         payload,
         lastMessageId: envelope.message_id,
         updatedAt: new Date().toISOString(),
       };
-      this.deps.audit("invoice.fix_requested", invoiceId, {
-        issues: bizResult.fixableIssues,
+      this.audit("invoice.fix_requested", invoiceId, {
+        issues: businessRuleResult.fixableIssues,
       });
       return {
         processed: true,
         action: "request_fix",
-        invoiceId,
-        details: bizResult.fixableIssues,
+        details: businessRuleResult.fixableIssues,
       };
     }
 
-    state.invoices[invoiceId] = {
+    this.state.invoices[invoiceId] = {
       state: "validated",
       payload,
       lastMessageId: envelope.message_id,
       updatedAt: new Date().toISOString(),
     };
-    this.deps.audit("invoice.received_and_validated", invoiceId, {
+    this.audit("invoice.received_and_validated", invoiceId, {
       from: envelope.from,
       total: payload.data.total,
     });
@@ -216,7 +294,6 @@ export class BillingService {
     return {
       processed: true,
       action: "validated",
-      invoiceId,
       details: {
         from: envelope.from,
         total: payload.data.total,
@@ -225,24 +302,21 @@ export class BillingService {
     };
   }
 
-  handleStateUpdate(
+  private handleStateUpdate(
     envelope: Envelope,
     payload: unknown
-  ): { processed: boolean; action: string; invoiceId?: string; details: unknown } {
-    const state = this.deps.getState();
-    const meta = (payload as any)?.meta;
-    const invoiceId = meta?.invoice_id;
-    if (!invoiceId || !state.invoices[invoiceId]) {
+  ): { processed: boolean; action: string; details: unknown } {
+    const invoiceId = this.getInvoiceId(payload);
+    if (!invoiceId || !this.state.invoices[invoiceId]) {
       return { processed: true, action: "ignored", details: "Unknown invoice" };
     }
 
-    const invoice = state.invoices[invoiceId];
+    const invoice = this.state.invoices[invoiceId];
     const trans = transition(invoice.state, envelope.message_type);
     if (!trans.ok) {
       return {
         processed: true,
         action: "ignored",
-        invoiceId,
         details: trans.error,
       };
     }
@@ -250,21 +324,87 @@ export class BillingService {
     invoice.state = trans.nextState!;
     invoice.lastMessageId = envelope.message_id;
     invoice.updatedAt = new Date().toISOString();
-    this.deps.audit(envelope.message_type, invoiceId, { payload });
+    this.audit(envelope.message_type, invoiceId, { payload });
 
     return {
       processed: true,
       action: envelope.message_type,
-      invoiceId,
       details: { newState: trans.nextState },
     };
   }
 
   private findIssuerAgent(invoiceId: string): AgentId | null {
-    const state = this.deps.getState();
-    const entry = state.auditLog.find(
-      (audit) => audit.invoiceId === invoiceId && audit.event === "invoice.received_and_validated"
+    const entry = this.state.auditLog.find(
+      (audit) =>
+        audit.invoiceId === invoiceId &&
+        audit.event === "invoice.received_and_validated"
     );
     return (entry?.details?.from as AgentId) ?? null;
+  }
+
+  private getInvoiceId(payload: unknown): string | undefined {
+    const meta = (payload as { meta?: { invoice_id?: string } } | undefined)?.meta;
+    return meta?.invoice_id;
+  }
+
+  private audit(event: string, invoiceId?: string, details: Record<string, unknown> = {}): void {
+    this.state.auditLog.push({
+      timestamp: new Date().toISOString(),
+      event,
+      invoiceId,
+      details,
+    });
+  }
+
+  private loadOrCreateState(): void {
+    if (existsSync(this.stateFile)) {
+      this.state = this.normalizeState(
+        JSON.parse(readFileSync(this.stateFile, "utf8")) as Partial<BillingState>
+      );
+      return;
+    }
+
+    const migrated = this.loadLegacyState();
+    if (migrated) {
+      this.state = migrated;
+      this.saveState();
+      return;
+    }
+
+    this.state = { invoices: {}, auditLog: [] };
+    this.saveState();
+  }
+
+  private loadLegacyState(): BillingState | null {
+    const legacyStateFile = join(this.agent.getDataDir(), "agent-state.json");
+    if (!existsSync(legacyStateFile)) {
+      return null;
+    }
+
+    const raw = JSON.parse(readFileSync(legacyStateFile, "utf8")) as {
+      invoices?: Record<string, BillingInvoiceRecord>;
+      auditLog?: BillingAuditEntry[];
+    };
+
+    if (!raw.invoices && !raw.auditLog) {
+      return null;
+    }
+
+    return this.normalizeState({
+      invoices: raw.invoices,
+      auditLog: raw.auditLog,
+    });
+  }
+
+  private normalizeState(raw: Partial<BillingState>): BillingState {
+    return {
+      invoices: raw.invoices ?? {},
+      auditLog: Array.isArray(raw.auditLog) ? raw.auditLog : [],
+    };
+  }
+
+  private saveState(): void {
+    mkdirSync(this.agent.getDataDir(), { recursive: true });
+    writeFileSync(this.stateFile, JSON.stringify(this.state, null, 2));
   }
 }

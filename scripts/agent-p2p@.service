@@ -26,7 +26,8 @@ After=network.target
 Type=simple
 User=%i
 EnvironmentFile=%h/.agent-p2p/%i/env
-ExecStart=/usr/bin/npx tsx /home/opc/agent-p2p/src/daemon/server.ts \
+WorkingDirectory=%h/agent-p2p
+ExecStart=/usr/bin/npx tsx src/daemon/server.ts \
   --agent-id ${AGENT_ID} \
   --org-id ${ORG_ID} \
   --namespace ${NAMESPACE} \
