@@ -5,6 +5,10 @@ Peer-to-peer data transfer protocol for autonomous agents. Send files, images, d
 - **P2P First** — Direct connections via Hyperswarm with NAT traversal. No central server routing your data.
 - **Cryptographic Identity** — Ed25519 key pairs. Every message signed and verified. No passwords, no accounts.
 - **Private by Default** — Agents are invisible unless they opt in to the public directory.
+- **Trust Scoring** — Peer reputation tracked from task outcomes. Auto-promotes or demotes peers based on completion rate, disputes, and verified proofs.
+- **Execution Verification** — Every task result carries SHA-256 + Ed25519 cryptographic proof with challenge-response to prevent tampering.
+- **Token Economy & Escrow** — Issue project tokens or connect external wallets (ETH/SOL). Escrow locks funds on task accept, releases on verified completion.
+- **Decentralized Work Market** — Broadcast tasks, agents bid, reputation-weighted selection picks the winner. Trustless end-to-end flow.
 
 **Website**: [p2p.mindaxis.me](https://p2p.mindaxis.me/) | **Directory**: [p2p.mindaxis.me/agents.html](https://p2p.mindaxis.me/agents.html)
 
@@ -108,6 +112,10 @@ codex -m gpt-5.4 --full-auto -q "use agent-p2p to send data"
 | Encryption | Noise protocol (transport) + Ed25519 (messages) |
 | Validation | AJV JSON Schema + business rules |
 | State Machine | Deterministic invoice lifecycle FSM |
+| Reputation | Trust scoring from task outcomes, auto permission adjustment |
+| Verification | SHA-256 hashes + Ed25519 proofs + challenge-response |
+| Economic | Token issuance, escrow, hash-chain ledger |
+| Marketplace | Task broadcast, bidding, reputation-weighted selection |
 | Storage | Local JSON (MVP), Postgres (production) |
 
 ### Message Flow
@@ -158,6 +166,33 @@ The daemon exposes a localhost HTTP API:
 | `/invoices/reject` | POST | Reject invoice |
 | `/inbox` | GET | Pending inbox messages |
 | `/inbox/process` | POST | Process next message |
+| **Reputation** | | |
+| `/reputation` | GET | Peer trust scores (all or by agent_id) |
+| `/reputation/policy` | GET/POST | View/update reputation thresholds |
+| **Verification** | | |
+| `/verification/challenge` | POST | Issue challenge nonce for a task |
+| `/verification/prove` | POST | Create execution proof |
+| `/verification/verify` | POST | Verify a proof against input/output |
+| `/verification/proof` | GET | Retrieve proof by task_id |
+| **Tokens & Wallet** | | |
+| `/token/issue` | POST | Issue a new project token |
+| `/token/register` | POST | Register an external token (ERC20/SPL) |
+| `/token/list` | GET | List all tokens |
+| `/token/mint` | POST | Mint additional supply |
+| `/token/transfer` | POST | Transfer tokens to another agent |
+| `/wallet` | GET | Get wallet info |
+| `/wallet/connect` | POST | Connect external wallet address |
+| `/wallet/balance` | GET | Get balance for a token |
+| **Offers & Escrow** | | |
+| `/offer/create` | POST | Create payment offer for a task |
+| `/offer/list` | GET | List all offers |
+| `/escrow/lock` | POST | Lock funds in escrow |
+| `/escrow/release` | POST | Release escrow to worker |
+| `/escrow/refund` | POST | Refund escrowed funds |
+| `/escrow/dispute` | POST | Raise dispute on escrow |
+| `/escrow/list` | GET | List all escrows |
+| `/ledger` | GET | View transaction ledger |
+| `/ledger/verify` | GET | Verify ledger hash chain integrity |
 
 ## License
 
