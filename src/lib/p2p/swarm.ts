@@ -228,6 +228,19 @@ export class P2PSwarm extends EventEmitter {
     return sent;
   }
 
+  /** Broadcast a task auction to all connected peers */
+  broadcastTask(payload: unknown): number {
+    let sent = 0;
+    for (const peer of this.peers.values()) {
+      if (peer.connected && peer.verified && peer.agentId) {
+        if (this.sendRaw(peer.stream, { type: "task_broadcast", payload })) {
+          sent++;
+        }
+      }
+    }
+    return sent;
+  }
+
   /** Broadcast to all connected peers */
   broadcast(message: SignedMessage): number {
     let sent = 0;
@@ -351,6 +364,9 @@ export class P2PSwarm extends EventEmitter {
       case "task_result":
       case "task_error":
       case "task_cancel":
+      case "task_broadcast":
+      case "task_bid":
+      case "task_award":
         if (!peer.verified) return;
         this.emit("task", { from: peer.agentId, type: msg.type, payload: msg.payload });
         break;

@@ -130,6 +130,7 @@ describe("E2E Security Integration", () => {
   // --- Token Issuance ---
 
   let tokenId: string;
+  let auctionId: string;
 
   it("Agent A issues a project token", async () => {
     const result = await api(PORT_A, tokenA, "POST", "/token/issue", {
@@ -165,6 +166,39 @@ describe("E2E Security Integration", () => {
     const result = await api(PORT_A, tokenA, "GET", "/token/list");
     assert.ok(result.tokens.length >= 1);
     assert.equal(result.tokens[0].symbol, "E2E");
+  });
+
+  // --- Auctions ---
+
+  it("Agent A creates an auction", async () => {
+    const result = await api(PORT_A, tokenA, "POST", "/auction/create", {
+      type: "code_review",
+      description: "Review the integration branch",
+      input: { branch: "feature/auction-api" },
+      budget: {
+        token_id: tokenId,
+        max_amount: 750,
+      },
+      bid_deadline: new Date(Date.now() + 60_000).toISOString(),
+      selection: "manual",
+      required_capabilities: ["code_review"],
+    });
+
+    assert.ok(result.auction, `should create auction: ${JSON.stringify(result)}`);
+    assert.equal(result.auction.broadcast.type, "code_review");
+    auctionId = result.auction.task_id;
+  });
+
+  it("lists the created auction", async () => {
+    const result = await api(PORT_A, tokenA, "GET", "/auction/list");
+    assert.ok(Array.isArray(result.auctions));
+    assert.ok(result.auctions.some((auction: any) => auction.task_id === auctionId));
+  });
+
+  it("gets auction details", async () => {
+    const result = await api(PORT_A, tokenA, "GET", `/auction/${encodeURIComponent(auctionId)}`);
+    assert.equal(result.task_id, auctionId);
+    assert.equal(result.broadcast.description, "Review the integration branch");
   });
 
   // --- Wallet ---

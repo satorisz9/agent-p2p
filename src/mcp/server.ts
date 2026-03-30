@@ -286,6 +286,76 @@ const TOOLS = [
     },
   },
   {
+    name: "auction_create",
+    description: "Create a marketplace auction and broadcast it to connected peers.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["type", "description", "input", "budget", "bid_deadline", "selection"],
+      properties: {
+        type: { type: "string" },
+        description: { type: "string" },
+        input: { type: "object", description: "Structured task input payload" },
+        budget: {
+          type: "object",
+          description: "Budget object with token_id and max_amount",
+        },
+        bid_deadline: { type: "string", description: "Bid deadline in ISO 8601 format" },
+        selection: { type: "string", description: "lowest_price | highest_reputation | best_value | manual" },
+        min_reputation: { type: "number" },
+        required_capabilities: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
+    },
+  },
+  {
+    name: "auction_list",
+    description: "List auctions tracked by the local daemon, optionally filtered by status.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        status: { type: "string", description: "Optional auction status filter" },
+      },
+    },
+  },
+  {
+    name: "auction_bid",
+    description: "Submit a bid for a known auction.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["task_id", "price", "estimated_duration_ms", "capabilities"],
+      properties: {
+        task_id: { type: "string" },
+        price: {
+          type: "object",
+          description: "Price object with token_id and amount",
+        },
+        estimated_duration_ms: { type: "number" },
+        capabilities: {
+          type: "array",
+          items: { type: "string" },
+        },
+        message: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "auction_finalize",
+    description: "Finalize an awarded auction by verifying proof and releasing escrow.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["task_id", "proof", "expected_input", "received_output", "worker_public_key"],
+      properties: {
+        task_id: { type: "string" },
+        proof: { type: "object", description: "Execution proof returned by the worker" },
+        expected_input: { type: "object" },
+        received_output: { type: "object" },
+        worker_public_key: { type: "string", description: "Worker public key in base64" },
+      },
+    },
+  },
+  {
     name: "inbox_list",
     description:
       "List unprocessed messages in the inbox (received via P2P but not yet validated/processed)",
@@ -456,6 +526,45 @@ async function main() {
           data = await daemonPost("/escrow/release", {
             escrow_id: args?.escrow_id,
             proof_id: args?.proof_id,
+          });
+          break;
+
+        case "auction_create":
+          data = await daemonPost("/auction/create", {
+            type: args?.type,
+            description: args?.description,
+            input: args?.input,
+            budget: args?.budget,
+            bid_deadline: args?.bid_deadline,
+            selection: args?.selection,
+            min_reputation: args?.min_reputation,
+            required_capabilities: args?.required_capabilities,
+          });
+          break;
+
+        case "auction_list": {
+          const qp = args?.status
+            ? `?status=${encodeURIComponent(args.status as string)}`
+            : "";
+          data = await daemonGet(`/auction/list${qp}`);
+          break;
+        }
+
+        case "auction_bid":
+          data = await daemonPost(`/auction/${encodeURIComponent(String(args?.task_id ?? ""))}/bid`, {
+            price: args?.price,
+            estimated_duration_ms: args?.estimated_duration_ms,
+            capabilities: args?.capabilities,
+            message: args?.message,
+          });
+          break;
+
+        case "auction_finalize":
+          data = await daemonPost(`/auction/${encodeURIComponent(String(args?.task_id ?? ""))}/finalize`, {
+            proof: args?.proof,
+            expected_input: args?.expected_input,
+            received_output: args?.received_output,
+            worker_public_key: args?.worker_public_key,
           });
           break;
 

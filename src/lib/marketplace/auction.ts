@@ -63,25 +63,24 @@ export class AuctionManager extends EventEmitter {
       created_at: now,
     };
 
+    return this.registerBroadcast(fullBroadcast);
+  }
+
+  /** Register a broadcast created elsewhere, preserving its original ID */
+  registerBroadcast(broadcast: TaskBroadcast): AuctionRecord {
+    const existing = this.auctions.get(broadcast.task_id);
+    if (existing) return existing;
+
     const auction: AuctionRecord = {
-      task_id: taskId,
-      broadcast: fullBroadcast,
+      task_id: broadcast.task_id,
+      broadcast,
       bids: [],
       status: "open",
-      created_at: now,
+      created_at: broadcast.created_at,
     };
 
-    this.auctions.set(taskId, auction);
-
-    // Set deadline timer
-    const deadlineMs = new Date(broadcast.bid_deadline).getTime() - Date.now();
-    if (deadlineMs > 0) {
-      const timer = setTimeout(() => {
-        this.closeBidding(taskId);
-      }, deadlineMs);
-      timer.unref?.();
-      this.deadlineTimers.set(taskId, timer);
-    }
+    this.auctions.set(broadcast.task_id, auction);
+    this.scheduleDeadline(broadcast.task_id, broadcast.bid_deadline);
 
     this.emit("auction:created", auction);
     return auction;
@@ -147,6 +146,26 @@ export class AuctionManager extends EventEmitter {
       agreed_price: bid.price,
       awarded_at: auction.awarded_at,
     };
+
+    this.emit("auction:awarded", { auction, award, bid });
+    return auction;
+  }
+
+  /** Apply an externally-awarded auction update received over P2P */
+  applyAward(award: TaskAward): AuctionRecord | null {
+    const auction = this.auctions.get(award.task_id);
+    if (!auction) return null;
+    if (auction.status === "completed" || auction.status === "cancelled") return null;
+
+    this.clearDeadlineTimer(award.task_id);
+
+    auction.status = "awarded";
+    auction.winner_bid_id = award.bid_id;
+    auction.winner_agent_id = award.awarded_to;
+    auction.awarded_at = award.awarded_at;
+
+    const bid = auction.bids.find((entry) => entry.bid_id === award.bid_id)
+      ?? auction.bids.find((entry) => entry.bidder === award.awarded_to);
 
     this.emit("auction:awarded", { auction, award, bid });
     return auction;
@@ -461,5 +480,25 @@ export class AuctionManager extends EventEmitter {
     this.deadlineTimers.clear();
     this.auctions.clear();
     this.removeAllListeners();
+  }
+
+  private scheduleDeadline(taskId: string, bidDeadline: string): void {
+    this.clearDeadlineTimer(taskId);
+
+    const deadlineMs = new Date(bidDeadline).getTime() - Date.now();
+    if (deadlineMs <= 0) return;
+
+    const timer = setTimeout(() => {
+      this.closeBidding(taskId);
+    }, deadlineMs);
+    timer.unref?.();
+    this.deadlineTimers.set(taskId, timer);
+  }
+
+  private clearDeadlineTimer(taskId: string): void {
+    const timer = this.deadlineTimers.get(taskId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.deadlineTimers.delete(taskId);
   }
 }

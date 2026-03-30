@@ -31,12 +31,25 @@ import { join } from "path";
 import { P2PAgent } from "../agent/core";
 import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
 import { InviteManager } from "../lib/invite/manager";
+import { AuctionManager } from "../lib/marketplace/auction";
 import { TaskManager } from "../lib/task/manager";
 import { TaskPlanner, type Plan } from "../lib/task/planner";
 import { ReputationManager } from "../lib/reputation/manager";
 import { ExecutionVerifier } from "../lib/verification/prover";
 import { EconomicManager } from "../lib/economic/wallet";
-import type { AgentId, OrgId, ConnectionMode, Heartbeat, InvoiceIssuePayload, ExecutionProof } from "../types/protocol";
+import type {
+  AgentId,
+  AuctionRecord,
+  AuctionStatus,
+  ConnectionMode,
+  ExecutionProof,
+  Heartbeat,
+  InvoiceIssuePayload,
+  OrgId,
+  TaskAward,
+  TaskBid,
+  TaskBroadcast,
+} from "../types/protocol";
 
 // --- Parse CLI args ---
 
@@ -100,7 +113,72 @@ function checkBearerAuth(req: IncomingMessage, expectedToken: string): boolean {
   return parts[1] === expectedToken;
 }
 
-function createDaemonApi(agent: P2PAgent, port: number, inviteManager: InviteManager, apiToken: string, taskManager: TaskManager, planner: TaskPlanner, reputation: ReputationManager, verifier: ExecutionVerifier, economic: EconomicManager) {
+type SwarmTaskPeer = {
+  agentId?: AgentId;
+  connected: boolean;
+  verified?: boolean;
+};
+
+type SwarmTaskApi = {
+  broadcastTask?: (broadcast: TaskBroadcast) => number;
+  getConnectedPeers?: () => SwarmTaskPeer[];
+  sendTaskMessage: (targetAgentId: AgentId, type: string, payload: unknown) => boolean;
+};
+
+function broadcastAuctionTask(agent: P2PAgent, broadcast: TaskBroadcast): number {
+  const swarm = (agent as any).swarm as SwarmTaskApi;
+  if (typeof swarm.broadcastTask === "function") {
+    return swarm.broadcastTask(broadcast);
+  }
+
+  const peers = typeof swarm.getConnectedPeers === "function" ? swarm.getConnectedPeers() : [];
+  let sent = 0;
+  for (const peer of peers) {
+    if (!peer.connected || peer.verified === false || !peer.agentId) continue;
+    if (swarm.sendTaskMessage(peer.agentId, "task_broadcast", broadcast)) {
+      sent++;
+    }
+  }
+  return sent;
+}
+
+function buildAuctionAward(auction: AuctionRecord): TaskAward | null {
+  if (!auction.winner_bid_id || !auction.winner_agent_id || !auction.awarded_at) {
+    return null;
+  }
+
+  const winningBid = auction.bids.find((bid) => bid.bid_id === auction.winner_bid_id);
+  if (!winningBid) return null;
+
+  return {
+    task_id: auction.task_id,
+    bid_id: auction.winner_bid_id,
+    awarded_to: auction.winner_agent_id,
+    agreed_price: winningBid.price,
+    awarded_at: auction.awarded_at,
+  };
+}
+
+function serializeAuction(auction: AuctionRecord, auctionOrigins: Map<string, AgentId>) {
+  return {
+    ...auction,
+    issuer_agent_id: auctionOrigins.get(auction.task_id) ?? null,
+  };
+}
+
+function createDaemonApi(
+  agent: P2PAgent,
+  port: number,
+  inviteManager: InviteManager,
+  apiToken: string,
+  taskManager: TaskManager,
+  planner: TaskPlanner,
+  reputation: ReputationManager,
+  verifier: ExecutionVerifier,
+  economic: EconomicManager,
+  auction: AuctionManager,
+  auctionOrigins: Map<string, AgentId>
+) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
     const remoteAddr = req.socket.remoteAddress;
@@ -679,6 +757,199 @@ function createDaemonApi(agent: P2PAgent, port: number, inviteManager: InviteMan
         return;
       }
 
+      // ============================================================
+      // Auction routes
+      // ============================================================
+
+      if (req.method === "POST" && path === "/auction/create") {
+        const body = JSON.parse(await readBody(req));
+        const missing: string[] = [];
+        for (const field of ["type", "description", "input", "budget", "bid_deadline", "selection"]) {
+          if (body[field] === undefined) missing.push(field);
+        }
+        if (missing.length > 0) {
+          json(res, 400, { error: `Missing required fields: ${missing.join(", ")}` });
+          return;
+        }
+
+        const record = auction.createAuction({
+          type: body.type,
+          description: body.description,
+          input: body.input,
+          budget: body.budget,
+          bid_deadline: body.bid_deadline,
+          selection: body.selection,
+          min_reputation: body.min_reputation,
+          required_capabilities: body.required_capabilities,
+          timeout_ms: body.timeout_ms,
+          priority: body.priority,
+        });
+        auctionOrigins.set(record.task_id, agent.getAgentInfo().agent_id);
+
+        const broadcastCount = broadcastAuctionTask(agent, record.broadcast);
+        json(res, 200, {
+          auction: serializeAuction(record, auctionOrigins),
+          broadcast_sent: broadcastCount,
+        });
+        return;
+      }
+
+      if (req.method === "GET" && path === "/auction/list") {
+        const status = url.searchParams.get("status") as AuctionStatus | null;
+        const auctions = auction.listAuctions(status ?? undefined).map((record) => (
+          serializeAuction(record, auctionOrigins)
+        ));
+        json(res, 200, { auctions });
+        return;
+      }
+
+      if (req.method === "GET" && path.match(/^\/auction\/[^/]+$/)) {
+        const taskId = decodeURIComponent(path.split("/")[2]);
+        const record = auction.getAuction(taskId);
+        json(res, record ? 200 : 404, record ? serializeAuction(record, auctionOrigins) : { error: "Auction not found" });
+        return;
+      }
+
+      if (req.method === "POST" && path.match(/^\/auction\/[^/]+\/bid$/)) {
+        const taskId = decodeURIComponent(path.split("/")[2]);
+        const body = JSON.parse(await readBody(req));
+        const record = auction.getAuction(taskId);
+        if (!record) {
+          json(res, 404, { error: "Auction not found" });
+          return;
+        }
+
+        const bidder = agent.getAgentInfo().agent_id;
+        const originAgentId = auctionOrigins.get(taskId) ?? bidder;
+        if (originAgentId === bidder) {
+          const result = auction.submitBid(taskId, {
+            task_id: taskId,
+            bidder,
+            price: body.price,
+            estimated_duration_ms: body.estimated_duration_ms,
+            reputation_score: reputation.getScore(bidder),
+            message: body.message,
+            capabilities: body.capabilities ?? [],
+          });
+          json(res, result.success ? 200 : 422, result);
+          return;
+        }
+
+        const swarm = (agent as any).swarm as SwarmTaskApi;
+        const sent = swarm.sendTaskMessage(originAgentId, "task_bid", {
+          task_id: taskId,
+          price: body.price,
+          estimated_duration_ms: body.estimated_duration_ms,
+          reputation_score: reputation.getScore(bidder),
+          message: body.message,
+          capabilities: body.capabilities ?? [],
+        });
+
+        json(res, sent ? 200 : 422, sent
+          ? { success: true, task_id: taskId, bidder, issuer_agent_id: originAgentId }
+          : { success: false, error: "Peer not connected", issuer_agent_id: originAgentId });
+        return;
+      }
+
+      if (req.method === "POST" && path.match(/^\/auction\/[^/]+\/award$/)) {
+        const taskId = decodeURIComponent(path.split("/")[2]);
+        if ((auctionOrigins.get(taskId) ?? agent.getAgentInfo().agent_id) !== agent.getAgentInfo().agent_id) {
+          json(res, 403, { error: "Only the auction issuer can award bids" });
+          return;
+        }
+
+        const body = JSON.parse(await readBody(req));
+        const record = auction.awardTask(taskId, body.bid_id);
+        if (!record) {
+          json(res, 422, { error: "Unable to award bid" });
+          return;
+        }
+
+        const award = buildAuctionAward(record);
+        let notified = false;
+        if (award && award.awarded_to !== agent.getAgentInfo().agent_id) {
+          notified = ((agent as any).swarm as SwarmTaskApi).sendTaskMessage(award.awarded_to, "task_award", award);
+        }
+
+        json(res, 200, { auction: serializeAuction(record, auctionOrigins), notified });
+        return;
+      }
+
+      if (req.method === "POST" && path.match(/^\/auction\/[^/]+\/close$/)) {
+        const taskId = decodeURIComponent(path.split("/")[2]);
+        if ((auctionOrigins.get(taskId) ?? agent.getAgentInfo().agent_id) !== agent.getAgentInfo().agent_id) {
+          json(res, 403, { error: "Only the auction issuer can close bidding" });
+          return;
+        }
+
+        const record = auction.closeBidding(taskId);
+        if (!record) {
+          json(res, 422, { error: "Unable to close auction" });
+          return;
+        }
+
+        const award = buildAuctionAward(record);
+        let notified = false;
+        if (award && award.awarded_to !== agent.getAgentInfo().agent_id) {
+          notified = ((agent as any).swarm as SwarmTaskApi).sendTaskMessage(award.awarded_to, "task_award", award);
+        }
+
+        json(res, 200, { auction: serializeAuction(record, auctionOrigins), notified });
+        return;
+      }
+
+      if (req.method === "POST" && path.match(/^\/auction\/[^/]+\/cancel$/)) {
+        const taskId = decodeURIComponent(path.split("/")[2]);
+        if ((auctionOrigins.get(taskId) ?? agent.getAgentInfo().agent_id) !== agent.getAgentInfo().agent_id) {
+          json(res, 403, { error: "Only the auction issuer can cancel the auction" });
+          return;
+        }
+
+        const record = auction.cancelAuction(taskId);
+        json(res, record ? 200 : 422, record ? serializeAuction(record, auctionOrigins) : { error: "Unable to cancel auction" });
+        return;
+      }
+
+      if (req.method === "POST" && path.match(/^\/auction\/[^/]+\/prepare$/)) {
+        const taskId = decodeURIComponent(path.split("/")[2]);
+        if ((auctionOrigins.get(taskId) ?? agent.getAgentInfo().agent_id) !== agent.getAgentInfo().agent_id) {
+          json(res, 403, { error: "Only the auction issuer can prepare execution" });
+          return;
+        }
+
+        const { fromBase64 } = await import("../lib/crypto/keys");
+        const privateKey = fromBase64(agent.getPrivateKey());
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const result = auction.prepareExecution(taskId, privateKey, keyId);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "POST" && path.match(/^\/auction\/[^/]+\/finalize$/)) {
+        const taskId = decodeURIComponent(path.split("/")[2]);
+        if ((auctionOrigins.get(taskId) ?? agent.getAgentInfo().agent_id) !== agent.getAgentInfo().agent_id) {
+          json(res, 403, { error: "Only the auction issuer can finalize execution" });
+          return;
+        }
+
+        const body = JSON.parse(await readBody(req));
+        const { fromBase64 } = await import("../lib/crypto/keys");
+        const privateKey = fromBase64(agent.getPrivateKey());
+        const workerPublicKey = fromBase64(body.worker_public_key);
+        const keyId = (agent as any).state?.keyId || "unknown";
+        const result = auction.finalizeExecution(
+          taskId,
+          body.proof,
+          body.expected_input,
+          body.received_output,
+          workerPublicKey,
+          privateKey,
+          keyId
+        );
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
       json(res, 404, { error: "Not found" });
     } catch (err) {
       json(res, 500, { error: (err as Error).message });
@@ -788,6 +1059,13 @@ async function main() {
   const reputation = new ReputationManager();
   const verifier = new ExecutionVerifier();
   const economic = new EconomicManager(config.agentId);
+  const auction = new AuctionManager({
+    agentId: config.agentId,
+    reputation,
+    economic,
+    verifier,
+  });
+  const auctionOrigins = new Map<string, AgentId>();
 
   // Auto-set default peer config when a peer connects (if not already set via invite)
   (agent as any).swarm.on("peer:identified", (peer: any) => {
@@ -800,7 +1078,45 @@ async function main() {
   // Wire up P2P task/heartbeat events to task manager
   (agent as any).swarm.on("task", ({ from, type, payload }: any) => {
     console.error(`[Task] ${type} from ${from}: ${payload.task_id || ""}`);
-    if (type === "task_request") {
+    if (type === "task_broadcast") {
+      const broadcast = payload as TaskBroadcast;
+      auction.registerBroadcast(broadcast);
+      auctionOrigins.set(broadcast.task_id, from);
+    } else if (type === "task_bid") {
+      const bidPayload = payload as {
+        task_id: string;
+        price: TaskBid["price"];
+        estimated_duration_ms: number;
+        reputation_score?: number;
+        message?: string;
+        capabilities?: string[];
+      };
+
+      if ((auctionOrigins.get(bidPayload.task_id) ?? config.agentId) !== config.agentId) {
+        console.error(`[Auction] Ignored bid for non-local auction ${bidPayload.task_id} from ${from}`);
+        return;
+      }
+
+      const result = auction.submitBid(bidPayload.task_id, {
+        task_id: bidPayload.task_id,
+        bidder: from,
+        price: bidPayload.price,
+        estimated_duration_ms: bidPayload.estimated_duration_ms,
+        reputation_score: bidPayload.reputation_score ?? reputation.getScore(from),
+        message: bidPayload.message,
+        capabilities: bidPayload.capabilities ?? [],
+      });
+
+      if (!result.success) {
+        console.error(`[Auction] Rejected bid for ${bidPayload.task_id} from ${from}: ${result.error}`);
+      }
+    } else if (type === "task_award") {
+      const award = payload as TaskAward;
+      const updated = auction.applyAward(award);
+      if (!updated) {
+        console.error(`[Auction] Ignored award for unknown task ${award.task_id}`);
+      }
+    } else if (type === "task_request") {
       const perm = taskManager.checkPermission(from, "task", "send");
       if (!perm.allowed) {
         (agent as any).swarm.sendTaskMessage(from, "task_reject", { task_id: payload.task_id, reason: "Not permitted" });
@@ -906,7 +1222,19 @@ async function main() {
     console.error(`[Plan] ${planId} ${status}`);
   });
 
-  const httpServer = createDaemonApi(agent, config.port, inviteManager, apiToken, taskManager, planner, reputation, verifier, economic);
+  const httpServer = createDaemonApi(
+    agent,
+    config.port,
+    inviteManager,
+    apiToken,
+    taskManager,
+    planner,
+    reputation,
+    verifier,
+    economic,
+    auction,
+    auctionOrigins
+  );
 
   // Discovery site integration
   let discovery: DiscoveryClient | null = null;
@@ -968,6 +1296,7 @@ async function main() {
     discovery?.stopPolling();
     planner.destroy();
     taskManager.destroy();
+    auction.destroy();
     reputation.destroy();
     verifier.destroy();
     economic.destroy();
