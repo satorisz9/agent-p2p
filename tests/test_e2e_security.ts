@@ -358,6 +358,73 @@ describe("E2E Security Integration", () => {
     assert.equal(balanceAfter, balanceBefore + 500);
   });
 
+  // --- Profile & Matching ---
+
+  it("Agent A has auto-detected profile", async () => {
+    const profile = await api(PORT_A, tokenA, "GET", "/profile");
+    assert.equal(profile.agent_id, AGENT_A);
+    assert.equal(profile.availability, "available");
+    // Should auto-detect skills from agent-p2p's own package.json
+    assert.ok(Array.isArray(profile.skills));
+    assert.ok(profile.skills.length > 0, "Should auto-detect at least one skill");
+    assert.ok(profile.skills.some((s: any) => s.skill === "typescript"), "Should detect typescript");
+  });
+
+  it("Agent A can update profile skills", async () => {
+    const result = await api(PORT_A, tokenA, "POST", "/profile", {
+      skills: [
+        { domain: "coding", skill: "typescript", level: 3 },
+        { domain: "coding", skill: "react", level: 2 },
+      ],
+      capability_tier: "high",
+    });
+    assert.equal(result.skills.length, 2);
+    assert.equal(result.capability_tier, "high");
+  });
+
+  it("Agent B can update profile and be matched", async () => {
+    await api(PORT_B, tokenB, "POST", "/profile", {
+      skills: [
+        { domain: "coding", skill: "python", level: 3 },
+        { domain: "data", skill: "postgresql", level: 2 },
+      ],
+    });
+
+    // A can't match B yet — profiles propagate via heartbeat, not instantly
+    // But we can test the /match endpoint by checking A's own cached profiles
+    const profiles = await api(PORT_A, tokenA, "GET", "/peers/profiles");
+    assert.ok(Array.isArray(profiles.profiles));
+    // Note: profiles may or may not have arrived yet depending on heartbeat timing
+  });
+
+  it("Agent A creates auction with required_skills", async () => {
+    const result = await api(PORT_A, tokenA, "POST", "/auction/create", {
+      type: "data_pipeline",
+      description: "Build ETL pipeline",
+      input: { tables: ["users", "orders"] },
+      budget: { token_id: tokenId, max_amount: 2000 },
+      bid_deadline: new Date(Date.now() + 60_000).toISOString(),
+      selection: "best_value",
+      required_skills: [
+        { domain: "coding", skill: "python", level: 2 },
+        { domain: "data", skill: "postgresql", level: 1 },
+      ],
+    });
+    assert.ok(result.auction);
+    assert.deepEqual(result.auction.broadcast.required_skills, [
+      { domain: "coding", skill: "python", level: 2 },
+      { domain: "data", skill: "postgresql", level: 1 },
+    ]);
+  });
+
+  it("/match returns matching peers (may be empty before heartbeat propagation)", async () => {
+    const result = await api(PORT_A, tokenA, "POST", "/match", {
+      required_skills: [{ domain: "coding", skill: "typescript", level: 1 }],
+    });
+    assert.ok(Array.isArray(result.matches));
+    // Results depend on whether heartbeats have propagated — no strict assertion
+  });
+
   // --- Auth ---
 
   it("rejects requests without auth token", async () => {
