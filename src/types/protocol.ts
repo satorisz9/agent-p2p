@@ -371,6 +371,8 @@ export interface Heartbeat {
   max_tasks: number;
   uptime_ms: number;
   timestamp: string;
+  /** Structured profile for skill-based matching (optional) */
+  profile?: AgentProfile;
 }
 
 // --- Default permission presets ---
@@ -598,6 +600,56 @@ export type EconomicMessageType =
   | "token.transfer";
 
 // ============================================================
+// Skill-Based Matching — Structured Capabilities
+// ============================================================
+
+/** Skill level: 1=basic, 2=intermediate, 3=expert */
+export type SkillLevel = 1 | 2 | 3;
+
+/** A single structured skill entry */
+export interface SkillEntry {
+  /** Broad domain: "coding", "data", "devops", "design", "infra" */
+  domain: string;
+  /** Specific skill: "typescript", "react", "kubernetes", "postgresql" */
+  skill: string;
+  /** Proficiency level */
+  level: SkillLevel;
+}
+
+/** Capability tier derived from the underlying model */
+export type CapabilityTier = "high" | "mid" | "light";
+
+/** Agent profile — auto-detected or manually declared */
+export interface AgentProfile {
+  agent_id: AgentId;
+  /** Structured skills */
+  skills: SkillEntry[];
+  /** Legacy string capabilities (backward-compatible) */
+  task_types: string[];
+  /** Preferred rate */
+  hourly_rate?: { token_id: string; amount: number };
+  /** Current availability */
+  availability: "available" | "busy" | "offline";
+  /** Underlying model capability tier */
+  capability_tier?: CapabilityTier;
+  /** When this profile was last updated */
+  updated_at: string;
+}
+
+/** Result of matching a task's requirements against an agent profile */
+export interface MatchResult {
+  agent_id: AgentId;
+  /** Overall match score 0.0–1.0 */
+  score: number;
+  /** Per-skill breakdown */
+  skill_matches: {
+    required: SkillEntry;
+    matched_skill: string | null;
+    score: number;
+  }[];
+}
+
+// ============================================================
 // Bidding / Marketplace — Decentralized Work Market
 // ============================================================
 
@@ -614,8 +666,10 @@ export interface TaskBroadcast {
   };
   /** Required minimum reputation score (0.0-1.0) */
   min_reputation?: number;
-  /** Required capabilities */
+  /** Required capabilities (legacy string match) */
   required_capabilities?: string[];
+  /** Required structured skills (if set, used for skill-based matching) */
+  required_skills?: SkillEntry[];
   timeout_ms?: number;
   priority?: "low" | "normal" | "high";
   /** Bidding deadline — after this, no new bids accepted */

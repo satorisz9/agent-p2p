@@ -30,12 +30,15 @@ import type {
 import type { ReputationManager } from "../reputation/manager";
 import type { EconomicManager } from "../economic/wallet";
 import type { ExecutionVerifier } from "../verification/prover";
+import type { ProfileManager } from "../matching/profile";
 
 export interface AuctionManagerConfig {
   agentId: AgentId;
   reputation: ReputationManager;
   economic: EconomicManager;
   verifier: ExecutionVerifier;
+  /** Optional: enables skill-based matching in best_value strategy */
+  profileManager?: ProfileManager;
 }
 
 export class AuctionManager extends EventEmitter {
@@ -293,10 +296,15 @@ export class AuctionManager extends EventEmitter {
         return scoredBids[0].bid;
 
       case "best_value": {
-        // Weighted composite score:
-        //   40% price (normalized: lower is better)
-        //   40% reputation (higher is better)
-        //   20% speed (lower estimated_duration is better)
+        // Weighted composite score — weights shift when skill matching is active:
+        //   With skills:    30% price + 30% reputation + 15% speed + 25% skill match
+        //   Without skills: 40% price + 40% reputation + 20% speed (legacy)
+        const hasSkills = auction.broadcast.required_skills && auction.broadcast.required_skills.length > 0;
+        const wPrice = hasSkills ? 0.3 : 0.4;
+        const wRep = hasSkills ? 0.3 : 0.4;
+        const wSpeed = hasSkills ? 0.15 : 0.2;
+        const wSkill = hasSkills ? 0.25 : 0;
+
         const maxPrice = Math.max(...scoredBids.map(s => s.bid.price.amount));
         const maxDuration = Math.max(...scoredBids.map(s => s.bid.estimated_duration_ms || 1));
 
@@ -304,7 +312,16 @@ export class AuctionManager extends EventEmitter {
           const priceScore = 1 - (s.bid.price.amount / (maxPrice || 1));
           const repScore = s.actualReputation;
           const speedScore = 1 - ((s.bid.estimated_duration_ms || maxDuration) / (maxDuration || 1));
-          const composite = priceScore * 0.4 + repScore * 0.4 + speedScore * 0.2;
+
+          let skillScore = 0;
+          if (hasSkills && this.config.profileManager) {
+            skillScore = this.config.profileManager.getMatchScore(
+              s.bid.bidder,
+              auction.broadcast.required_skills!
+            );
+          }
+
+          const composite = priceScore * wPrice + repScore * wRep + speedScore * wSpeed + skillScore * wSkill;
           return { ...s, composite };
         });
 

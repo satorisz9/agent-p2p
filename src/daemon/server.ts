@@ -38,6 +38,8 @@ import { TaskPlanner, type Plan } from "../lib/task/planner";
 import { ReputationManager } from "../lib/reputation/manager";
 import { ExecutionVerifier } from "../lib/verification/prover";
 import { EconomicManager } from "../lib/economic/wallet";
+import { ProfileManager } from "../lib/matching/profile";
+import { WorkspaceIntrospector } from "../lib/matching/introspect";
 import type {
   AgentId,
   AuctionRecord,
@@ -181,7 +183,8 @@ function createDaemonApi(
   economic: EconomicManager,
   auction: AuctionManager,
   auctionOrigins: Map<string, AgentId>,
-  billing: BillingPlugin | null
+  billing: BillingPlugin | null,
+  profileManager: ProfileManager
 ) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
@@ -775,6 +778,42 @@ function createDaemonApi(
       }
 
       // ============================================================
+      // Profile & Matching routes
+      // ============================================================
+
+      if (req.method === "GET" && path === "/profile") {
+        json(res, 200, profileManager.getLocalProfile());
+        return;
+      }
+
+      if (req.method === "POST" && path === "/profile") {
+        const body = JSON.parse(await readBody(req));
+        if (body.skills) profileManager.updateSkills(body.skills);
+        if (body.availability) profileManager.setAvailability(body.availability);
+        if (body.capability_tier) profileManager.setCapabilityTier(body.capability_tier);
+        if (body.task_types) profileManager.setTaskTypes(body.task_types);
+        json(res, 200, profileManager.getLocalProfile());
+        return;
+      }
+
+      if (req.method === "POST" && path === "/match") {
+        const body = JSON.parse(await readBody(req));
+        if (!body.required_skills || !Array.isArray(body.required_skills)) {
+          json(res, 400, { error: "required_skills array is required" });
+          return;
+        }
+        const minScore = body.min_score ?? 0;
+        const matches = profileManager.findMatchingPeers(body.required_skills, minScore);
+        json(res, 200, { matches });
+        return;
+      }
+
+      if (req.method === "GET" && path === "/peers/profiles") {
+        json(res, 200, { profiles: profileManager.getAllPeerProfiles() });
+        return;
+      }
+
+      // ============================================================
       // Auction routes
       // ============================================================
 
@@ -798,10 +837,33 @@ function createDaemonApi(
           selection: body.selection,
           min_reputation: body.min_reputation,
           required_capabilities: body.required_capabilities,
+          required_skills: body.required_skills,
           timeout_ms: body.timeout_ms,
           priority: body.priority,
         });
         auctionOrigins.set(record.task_id, agent.getAgentInfo().agent_id);
+
+        // Push notification: if required_skills set, notify matching peers first
+        let notifiedPeers = 0;
+        if (body.required_skills && body.required_skills.length > 0) {
+          const matches = profileManager.findMatchingPeers(body.required_skills, 0.3);
+          const swarm = (agent as any).swarm as SwarmTaskApi;
+          for (const match of matches) {
+            if (swarm.sendTaskMessage(match.agent_id as AgentId, "task_notify", {
+              task_id: record.task_id,
+              type: body.type,
+              description: body.description,
+              required_skills: body.required_skills,
+              budget: body.budget,
+              match_score: match.score,
+            })) {
+              notifiedPeers++;
+            }
+          }
+          if (notifiedPeers > 0) {
+            console.error(`[Match] Notified ${notifiedPeers} matching peers for ${record.task_id}`);
+          }
+        }
 
         const broadcastCount = broadcastAuctionTask(agent, record.broadcast);
         json(res, 200, {
@@ -1078,11 +1140,21 @@ async function main() {
   const reputation = new ReputationManager();
   const verifier = new ExecutionVerifier();
   const economic = new EconomicManager(config.agentId);
+  const profileManager = new ProfileManager(config.agentId, reputation);
+
+  // Auto-detect skills from workspace
+  const detectedSkills = WorkspaceIntrospector.scanDirectory(process.cwd());
+  if (detectedSkills.length > 0) {
+    profileManager.updateSkills(detectedSkills);
+    console.error(`[Profile] Auto-detected ${detectedSkills.length} skills: ${detectedSkills.map(s => s.skill).join(", ")}`);
+  }
+
   const auction = new AuctionManager({
     agentId: config.agentId,
     reputation,
     economic,
     verifier,
+    profileManager,
   });
   const auctionOrigins = new Map<string, AgentId>();
 
@@ -1179,6 +1251,10 @@ async function main() {
 
   (agent as any).swarm.on("heartbeat", ({ from, payload }: any) => {
     taskManager.emit("heartbeat:received", { from, ...payload });
+    // Cache peer profile from heartbeat
+    if (payload.profile) {
+      profileManager.updatePeerProfile(payload.profile);
+    }
   });
 
   // Handle task_poll from workers: dequeue a task and send it
@@ -1203,8 +1279,9 @@ async function main() {
     }
   });
 
-  // Start heartbeat + task queue poll every 30s
+  // Start heartbeat + task queue poll every 30s (attach profile for skill matching)
   taskManager.startHeartbeat(30_000, (hb: Heartbeat) => {
+    hb.profile = profileManager.getLocalProfile();
     (agent as any).swarm.broadcastHeartbeat(hb);
   });
 
@@ -1253,7 +1330,8 @@ async function main() {
     economic,
     auction,
     auctionOrigins,
-    billing
+    billing,
+    profileManager
   );
 
   // Discovery site integration
