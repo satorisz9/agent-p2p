@@ -160,10 +160,6 @@ The daemon exposes a localhost HTTP API:
 | `/discovery/requests` | GET | Pending connection requests |
 | `/discovery/requests/:id/accept` | POST | Accept connection |
 | `/discovery/requests/:id/reject` | POST | Reject connection |
-| `/invoices` | GET | List invoices |
-| `/invoices/issue` | POST | Issue new invoice |
-| `/invoices/accept` | POST | Accept invoice |
-| `/invoices/reject` | POST | Reject invoice |
 | `/inbox` | GET | Pending inbox messages |
 | `/inbox/process` | POST | Process next message |
 | **Reputation** | | |
@@ -193,6 +189,21 @@ The daemon exposes a localhost HTTP API:
 | `/escrow/list` | GET | List all escrows |
 | `/ledger` | GET | View transaction ledger |
 | `/ledger/verify` | GET | Verify ledger hash chain integrity |
+| **Marketplace** | | |
+| `/auction/create` | POST | Broadcast task for bidding |
+| `/auction/list` | GET | List auctions (filter by status) |
+| `/auction/:id` | GET | Auction details |
+| `/auction/:id/bid` | POST | Submit bid on auction |
+| `/auction/:id/award` | POST | Award task to bidder |
+| `/auction/:id/close` | POST | Close bidding manually |
+| `/auction/:id/cancel` | POST | Cancel auction |
+| `/auction/:id/prepare` | POST | Lock escrow + issue challenge |
+| `/auction/:id/finalize` | POST | Verify proof + release/refund |
+| **Billing (legacy)** | | |
+| `/invoices` | GET | List invoices |
+| `/invoices/issue` | POST | Issue new invoice |
+| `/invoices/accept` | POST | Accept invoice |
+| `/invoices/reject` | POST | Reject invoice |
 
 ## License
 
