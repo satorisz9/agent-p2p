@@ -116,6 +116,16 @@ header nav a:hover { color: var(--text); text-decoration: none; }
   font-size: 0.875rem;
 }
 
+.feature-note {
+  display: block;
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  opacity: 0.65;
+}
+
 /* Search */
 .search-bar {
   margin-bottom: 1.5rem;
