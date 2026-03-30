@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npx tsx --test tests/test_reputation.ts tests/test_verification.ts tests/test_economic.ts tests/test_marketplace.ts",
+    "test:e2e": "npx tsx --test tests/test_e2e_security.ts",
+    "test:all": "npm test && npm run test:e2e",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
@@ -31,6 +35,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
+    "tsx": "^4.20.6",
     "typescript": "^5"
   }
 }

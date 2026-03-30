@@ -1,13 +1,8 @@
-import { ed25519 } from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha2';
+import { hashes, verify } from '@noble/ed25519';
+import { sha512 } from '@noble/hashes/sha2.js';
 
 // Configure @noble/ed25519 to use @noble/hashes (no Node.js crypto needed)
-ed25519.etc.sha512Sync = (...msgs: Uint8Array[]) => {
-  const merged = new Uint8Array(msgs.reduce((a, m) => a + m.length, 0));
-  let offset = 0;
-  for (const m of msgs) { merged.set(m, offset); offset += m.length; }
-  return sha512(merged);
-};
+hashes.sha512 = sha512;
 
 function canonicalJson(obj: Record<string, unknown>): string {
   return JSON.stringify(obj, Object.keys(obj).sort());
@@ -45,7 +40,7 @@ export function verifySignedRequest(
   const signingInput = new TextEncoder().encode(canonicalJson(fields));
 
   try {
-    return ed25519.verify(fromBase64(signature), signingInput, fromBase64(publicKey));
+    return verify(fromBase64(signature), signingInput, fromBase64(publicKey));
   } catch {
     return false;
   }

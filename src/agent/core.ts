@@ -1,17 +1,17 @@
 /**
- * Agent Core — ties together P2P swarm, crypto, state machine, and storage.
+ * P2P Agent Core — ties together P2P swarm, crypto, state machine, and storage.
  *
  * Each agent instance:
  *   - Has an Ed25519 key pair for signing
  *   - Connects to the Hyperswarm P2P network
- *   - Can issue invoices (billing) or receive/validate them (AP)
+ *   - Exchanges signed messages and files with peers
  *   - Stores all state locally (in-memory for MVP, file/DB later)
  */
 
 import { createHash, randomBytes } from "crypto";
 import { EventEmitter } from "events";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 
 import { P2PSwarm } from "../lib/p2p/swarm";
 import {
@@ -78,7 +78,7 @@ export interface AgentConfig {
   namespace: string; // P2P topic namespace
 }
 
-export class InvoiceAgent extends EventEmitter {
+export class P2PAgent extends EventEmitter {
   private state!: AgentState;
   private keys!: KeyPair;
   private swarm!: P2PSwarm;
@@ -148,7 +148,7 @@ export class InvoiceAgent extends EventEmitter {
   }
 
   // ============================================================
-  // Invoice Operations (exposed as MCP tools)
+  // Message Operations (exposed as MCP tools)
   // ============================================================
 
   /** Issue an invoice and send to target agent via P2P */
@@ -645,6 +645,7 @@ export class InvoiceAgent extends EventEmitter {
       stateToWrite.privateKey = "";
     }
 
+    mkdirSync(dirname(this.stateFile), { recursive: true });
     writeFileSync(this.stateFile, JSON.stringify(stateToWrite, null, 2));
   }
 }

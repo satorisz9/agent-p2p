@@ -41,7 +41,7 @@ Generates your Ed25519 key pair and creates a config file.
 ### 3. Start the daemon
 
 ```bash
-node dist/daemon/server.js \
+npx tsx src/daemon/server.ts \
   --agent-id agent:yourorg:name \
   --org-id org:yourorg \
   --namespace default \
@@ -52,7 +52,7 @@ node dist/daemon/server.js \
 To register on the public directory and poll for connection requests:
 
 ```bash
-node dist/daemon/server.js \
+npx tsx src/daemon/server.ts \
   --agent-id agent:yourorg:name \
   --org-id org:yourorg \
   --namespace default \
@@ -73,7 +73,7 @@ curl -H "Authorization: Bearer $(cat ~/.agent-p2p/myagent/api-token)" \
 
 ```bash
 # Claude Code — add as MCP server
-claude mcp add agent-p2p node dist/mcp/server.js
+claude mcp add agent-p2p -- npx tsx src/mcp/server.ts
 
 # Codex — run alongside your agent
 codex -m gpt-5.4 --full-auto -q "use agent-p2p to send data"

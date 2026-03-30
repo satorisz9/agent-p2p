@@ -79,6 +79,7 @@ export class AuctionManager extends EventEmitter {
       const timer = setTimeout(() => {
         this.closeBidding(taskId);
       }, deadlineMs);
+      timer.unref?.();
       this.deadlineTimers.set(taskId, timer);
     }
 

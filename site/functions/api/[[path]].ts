@@ -1,4 +1,7 @@
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { hashes, verify } from '@noble/ed25519';
+import { sha512 } from '@noble/hashes/sha2.js';
+
+hashes.sha512 = sha512;
 
 interface Env { DB: D1Database; }
 
@@ -41,7 +44,7 @@ function verifySignedRequest(body: Record<string, unknown>, publicKey: string): 
   }
 
   try {
-    return ed25519.verify(fromBase64(signature), new TextEncoder().encode(canonicalJson(fields)), fromBase64(publicKey));
+    return verify(fromBase64(signature), new TextEncoder().encode(canonicalJson(fields)), fromBase64(publicKey));
   } catch {
     return false;
   }

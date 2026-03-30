@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Agent Daemon — long-running process independent of Claude Code sessions.
+ * P2P Agent Daemon — long-running process independent of Claude Code sessions.
  *
  * Responsibilities:
  *   - Maintains Hyperswarm P2P connections
- *   - Manages invoice state machine
+ *   - Manages agent state and message flows
  *   - Queues outbound messages for offline peers
  *   - Retries delivery on reconnection
  *   - Exposes a local HTTP API on localhost for MCP server to connect to
@@ -17,10 +17,10 @@
  *
  * Usage:
  *   node dist/daemon/server.js \
- *     --agent-id agent:mindaxis:billing \
+ *     --agent-id agent:mindaxis:worker-a \
  *     --org-id org:mindaxis \
- *     --namespace invoices-2026 \
- *     --data-dir ~/.agent-p2p/billing \
+ *     --namespace marketplace-2026 \
+ *     --data-dir ~/.agent-p2p/worker-a \
  *     --port 7700
  */
 
@@ -28,7 +28,7 @@ import { createServer, IncomingMessage, ServerResponse } from "http";
 import { randomBytes } from "crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { InvoiceAgent } from "../agent/core";
+import { P2PAgent } from "../agent/core";
 import { DiscoveryClient, type ConnectionRequest } from "../lib/discovery/client";
 import { InviteManager } from "../lib/invite/manager";
 import { TaskManager } from "../lib/task/manager";
@@ -100,7 +100,7 @@ function checkBearerAuth(req: IncomingMessage, expectedToken: string): boolean {
   return parts[1] === expectedToken;
 }
 
-function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: InviteManager, apiToken: string, taskManager: TaskManager, planner: TaskPlanner, reputation: ReputationManager, verifier: ExecutionVerifier, economic: EconomicManager) {
+function createDaemonApi(agent: P2PAgent, port: number, inviteManager: InviteManager, apiToken: string, taskManager: TaskManager, planner: TaskPlanner, reputation: ReputationManager, verifier: ExecutionVerifier, economic: EconomicManager) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
     const remoteAddr = req.socket.remoteAddress;
@@ -338,7 +338,7 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
       if (req.method === "POST" && path === "/queue/dequeue") {
         const body = await readBody(req);
         const parsed = body ? JSON.parse(body) : {};
-        const task = taskManager.dequeue(config.agentId, parsed.capabilities);
+        const task = taskManager.dequeue(agent.getAgentInfo().agent_id, parsed.capabilities);
         json(res, task ? 200 : 204, task || { message: "No tasks available" });
         return;
       }
@@ -695,7 +695,7 @@ function createDaemonApi(agent: InvoiceAgent, port: number, inviteManager: Invit
 // --- Discovery routes (added to existing server) ---
 
 function addDiscoveryRoutes(
-  agent: InvoiceAgent,
+  agent: P2PAgent,
   discovery: DiscoveryClient,
   pendingRequests: ConnectionRequest[],
   inviteManager: InviteManager
@@ -775,7 +775,7 @@ async function main() {
   console.error(`[Daemon] Data dir: ${config.dataDir}`);
   console.error(`[Daemon] Namespace: ${config.namespace}`);
 
-  const agent = new InvoiceAgent({
+  const agent = new P2PAgent({
     agentId: config.agentId,
     orgId: config.orgId,
     namespace: config.namespace,
@@ -895,8 +895,7 @@ async function main() {
 
   // Load or create API auth token
   const apiToken = loadOrCreateApiToken(config.dataDir);
-  console.error(`[Daemon] API token: ${apiToken}`);
-  console.error(`[Daemon] Token file: ${join(config.dataDir, "api-token")}`);
+  console.error(`[Daemon] Auth token file: ${join(config.dataDir, "api-token")}`);
 
   const planner = new TaskPlanner(taskManager);
 
@@ -921,7 +920,7 @@ async function main() {
       orgId: config.orgId,
       publicKey: agentInfo.public_key,
       privateKey: agent.getPrivateKey(),
-      capabilities: ['data.transfer', 'invoice.issue', 'invoice.accept'],
+      capabilities: ["data.transfer", "task.execute", "task.bid", "file.send"],
       description: config.description,
     });
 

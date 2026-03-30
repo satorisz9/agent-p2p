@@ -12,10 +12,10 @@
  *   - The daemon handles state, retry, and network independently
  *
  * Usage:
- *   claude mcp add billing -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
+ *   claude mcp add agent-a -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
  *     --daemon-url http://127.0.0.1:7700
  *
- *   claude mcp add ap -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
+ *   claude mcp add agent-b -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
  *     --daemon-url http://127.0.0.1:7701
  */
 
@@ -176,6 +176,116 @@ const TOOLS = [
     },
   },
   {
+    name: "task_request",
+    description:
+      "Request a task from a target peer in the P2P marketplace.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["target_agent_id", "type", "description", "input"],
+      properties: {
+        target_agent_id: { type: "string" },
+        type: { type: "string", description: "Task type/capability identifier" },
+        description: { type: "string", description: "Human-readable task description" },
+        input: { type: "object", description: "Structured task input payload" },
+      },
+    },
+  },
+  {
+    name: "task_list",
+    description: "List tracked tasks in the local daemon.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        status: { type: "string", description: "Optional task status filter" },
+      },
+    },
+  },
+  {
+    name: "task_respond",
+    description:
+      "Respond to a task request with an action such as accept, reject, complete, fail, or cancel.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["task_id", "action"],
+      properties: {
+        task_id: { type: "string" },
+        action: { type: "string", description: "accept | reject | complete | fail | cancel" },
+        output: { type: "object", description: "Task output for completion responses" },
+        reason: { type: "string", description: "Reason for reject/cancel" },
+      },
+    },
+  },
+  {
+    name: "file_send",
+    description: "Send a local file to a connected peer.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["target_agent_id", "file_path"],
+      properties: {
+        target_agent_id: { type: "string" },
+        file_path: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "reputation_query",
+    description: "Query reputation records for a specific agent or the full registry.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        agent_id: { type: "string", description: "Optional agent ID to query" },
+      },
+    },
+  },
+  {
+    name: "token_issue",
+    description: "Issue a new marketplace token to the local agent wallet.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["name", "symbol", "initial_supply"],
+      properties: {
+        name: { type: "string" },
+        symbol: { type: "string" },
+        initial_supply: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "wallet_balance",
+    description: "Query wallet balance for a token and optional agent.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["token_id"],
+      properties: {
+        token_id: { type: "string" },
+        agent_id: { type: "string", description: "Optional agent ID override" },
+      },
+    },
+  },
+  {
+    name: "escrow_lock",
+    description: "Lock escrow funds for an accepted marketplace offer.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["offer_id"],
+      properties: {
+        offer_id: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "escrow_release",
+    description: "Release a locked escrow after proof verification.",
+    inputSchema: {
+      type: "object" as const,
+      required: ["escrow_id", "proof_id"],
+      properties: {
+        escrow_id: { type: "string" },
+        proof_id: { type: "string" },
+      },
+    },
+  },
+  {
     name: "inbox_list",
     description:
       "List unprocessed messages in the inbox (received via P2P but not yet validated/processed)",
@@ -276,6 +386,79 @@ async function main() {
           });
           break;
 
+        case "task_request":
+          data = await daemonPost("/task/request", {
+            target_agent_id: args?.target_agent_id,
+            type: args?.type,
+            description: args?.description,
+            input: args?.input,
+          });
+          break;
+
+        case "task_list": {
+          const qp = args?.status
+            ? `?status=${encodeURIComponent(args.status as string)}`
+            : "";
+          data = await daemonGet(`/task/list${qp}`);
+          break;
+        }
+
+        case "task_respond":
+          data = await daemonPost("/task/respond", {
+            task_id: args?.task_id,
+            action: args?.action,
+            output: args?.output,
+            reason: args?.reason,
+          });
+          break;
+
+        case "file_send":
+          data = await daemonPost("/file/send", {
+            target_agent_id: args?.target_agent_id,
+            file_path: args?.file_path,
+          });
+          break;
+
+        case "reputation_query": {
+          const qp = args?.agent_id
+            ? `?agent_id=${encodeURIComponent(args.agent_id as string)}`
+            : "";
+          data = await daemonGet(`/reputation${qp}`);
+          break;
+        }
+
+        case "token_issue":
+          data = await daemonPost("/token/issue", {
+            name: args?.name,
+            symbol: args?.symbol,
+            initial_supply: args?.initial_supply,
+          });
+          break;
+
+        case "wallet_balance": {
+          const params = new URLSearchParams({
+            token_id: String(args?.token_id ?? ""),
+          });
+          if (args?.agent_id) {
+            params.set("agent_id", String(args.agent_id));
+          }
+          data = await daemonGet(`/wallet/balance?${params.toString()}`);
+          break;
+        }
+
+        case "escrow_lock":
+          data = await daemonPost("/escrow/lock", {
+            offer_id: args?.offer_id,
+          });
+          break;
+
+        case "escrow_release":
+          data = await daemonPost("/escrow/release", {
+            escrow_id: args?.escrow_id,
+            proof_id: args?.proof_id,
+          });
+          break;
+
         case "inbox_list":
           data = await daemonGet("/inbox");
           break;
@@ -332,6 +515,18 @@ async function main() {
         description: "All invoices and their states",
         mimeType: "application/json",
       },
+      {
+        uri: "agent://tasks",
+        name: "Tracked Tasks",
+        description: "All tracked marketplace tasks and their statuses",
+        mimeType: "application/json",
+      },
+      {
+        uri: "agent://reputation",
+        name: "Reputation Records",
+        description: "Known reputation records for agents in the marketplace",
+        mimeType: "application/json",
+      },
     ],
   }));
 
@@ -345,6 +540,12 @@ async function main() {
         break;
       case "agent://invoices":
         data = await daemonGet("/invoices");
+        break;
+      case "agent://tasks":
+        data = await daemonGet("/task/list");
+        break;
+      case "agent://reputation":
+        data = await daemonGet("/reputation");
         break;
       default:
         throw new Error(`Unknown resource: ${uri}`);
