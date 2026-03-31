@@ -44,6 +44,7 @@ import { TaskPolicyManager } from "../lib/security/policy";
 import { SolanaClient } from "../lib/chain/solana";
 import { PumpFunClient } from "../lib/chain/pumpfun";
 import { ProjectManager } from "../lib/project/manager";
+import { generateIcon } from "../lib/ai/image";
 import type {
   AgentId,
   AuctionRecord,
@@ -1057,9 +1058,22 @@ function createDaemonApi(
 
           // Optionally launch token on pump.fun
           if (launch_on_pumpfun) {
-            const imageBuffer = image_base64
-              ? Buffer.from(image_base64, "base64")
-              : Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==", "base64");
+            let imageBuffer: Buffer;
+            if (image_base64) {
+              imageBuffer = Buffer.from(image_base64, "base64");
+            } else if (body.auto_generate_icon) {
+              console.error(`[Project] Generating icon via AI...`);
+              const iconResult = await generateIcon(name, body.symbol || "TOK", description || name);
+              if (iconResult.success && iconResult.buffer) {
+                imageBuffer = iconResult.buffer;
+                console.error(`[Project] Icon generated (${imageBuffer.length} bytes)`);
+              } else {
+                console.error(`[Project] Icon generation failed: ${iconResult.error}, using placeholder`);
+                imageBuffer = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==", "base64");
+              }
+            } else {
+              imageBuffer = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==", "base64");
+            }
             const launchResult = await pumpfun.launch(
               solanaKeypair, name, body.symbol || name.substring(0, 4).toUpperCase(),
               description || name,
@@ -1168,6 +1182,29 @@ function createDaemonApi(
           }
         }
         json(res, 200, { broadcast: payload, peers_notified: sent });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/ai/generate-icon") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const result = await generateIcon(
+            body.name || "Token",
+            body.symbol || "TOK",
+            body.description || ""
+          );
+          if (result.success && result.buffer) {
+            json(res, 200, {
+              success: true,
+              image_base64: result.buffer.toString("base64"),
+              size: result.buffer.length,
+            });
+          } else {
+            json(res, 422, { success: false, error: result.error });
+          }
+        } catch (err) {
+          json(res, 500, { error: (err as Error).message });
+        }
         return;
       }
 
