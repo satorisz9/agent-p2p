@@ -41,6 +41,7 @@ import { EconomicManager } from "../lib/economic/wallet";
 import { ProfileManager } from "../lib/matching/profile";
 import { WorkspaceIntrospector } from "../lib/matching/introspect";
 import { TaskPolicyManager } from "../lib/security/policy";
+import { SolanaClient } from "../lib/chain/solana";
 import type {
   AgentId,
   AuctionRecord,
@@ -79,6 +80,8 @@ function parseArgs() {
     discoveryUrl: get("--discovery-url", ""),
     description: get("--description", ""),
     enableBilling: has("--enable-billing"),
+    solanaNetwork: get("--solana-network", "devnet") as "devnet" | "mainnet-beta",
+    solanaRpcUrl: get("--solana-rpc-url", ""),
   };
 }
 
@@ -215,7 +218,9 @@ function createDaemonApi(
   billing: BillingPlugin | null,
   profileManager: ProfileManager,
   taskPolicy: TaskPolicyManager,
-  dataDir: string
+  dataDir: string,
+  solana: SolanaClient,
+  solanaKeypair: import("@solana/web3.js").Keypair
 ) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
@@ -832,6 +837,201 @@ function createDaemonApi(
       }
 
       // ============================================================
+      // Solana on-chain routes
+      // ============================================================
+
+      if (req.method === "GET" && path === "/solana/wallet") {
+        const address = solanaKeypair.publicKey.toBase58();
+        try {
+          const balance = await solana.getSOLBalance(address);
+          json(res, 200, {
+            address,
+            network: solana.getNetwork(),
+            sol_balance: balance / 1e9,
+            sol_balance_lamports: balance,
+            explorer_url: solana.explorerUrl("address", address),
+          });
+        } catch (err) {
+          json(res, 200, {
+            address,
+            network: solana.getNetwork(),
+            sol_balance: 0,
+            explorer_url: solana.explorerUrl("address", address),
+          });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && path === "/solana/airdrop") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const amount = body.amount || 1;
+          const sig = await solana.airdrop(solanaKeypair.publicKey.toBase58(), amount);
+          json(res, 200, {
+            success: true,
+            amount,
+            tx_signature: sig,
+            explorer_url: solana.explorerUrl("tx", sig),
+          });
+        } catch (err) {
+          json(res, 422, { success: false, error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && path === "/solana/token/create") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const decimals = body.decimals ?? 9;
+          const result = await solana.createToken(solanaKeypair, decimals);
+
+          // Also mint initial supply if specified
+          let mintResult = null;
+          if (body.initial_supply && body.initial_supply > 0) {
+            mintResult = await solana.mintTokens(
+              solanaKeypair,
+              result.mintAddress,
+              body.initial_supply,
+              decimals
+            );
+          }
+
+          // Register in local economic state too
+          const tokenId = `sol:${result.mintAddress}`;
+          economic.registerExternalToken(
+            tokenId,
+            body.name || "SPL Token",
+            body.symbol || "SPL",
+            decimals,
+            "solana",
+            result.mintAddress
+          );
+          saveEconomicState(dataDir, economic);
+
+          json(res, 200, {
+            success: true,
+            token_id: tokenId,
+            mint_address: result.mintAddress,
+            decimals,
+            initial_supply: body.initial_supply || 0,
+            mint_tx: mintResult?.txSignature || null,
+            explorer_url: result.explorerUrl,
+            mint_explorer_url: mintResult?.explorerUrl || null,
+          });
+        } catch (err) {
+          json(res, 422, { success: false, error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && path === "/solana/token/mint") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const { mint_address, amount, decimals } = body;
+          if (!mint_address || !amount) {
+            json(res, 400, { error: "mint_address and amount required" });
+            return;
+          }
+          const result = await solana.mintTokens(
+            solanaKeypair,
+            mint_address,
+            amount,
+            decimals ?? 9
+          );
+          json(res, 200, {
+            success: true,
+            tx_signature: result.txSignature,
+            explorer_url: result.explorerUrl,
+          });
+        } catch (err) {
+          json(res, 422, { success: false, error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && path === "/solana/token/transfer") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const { mint_address, to_address, amount, decimals } = body;
+          if (!mint_address || !to_address || !amount) {
+            json(res, 400, { error: "mint_address, to_address, and amount required" });
+            return;
+          }
+          const result = await solana.transferTokens(
+            solanaKeypair,
+            mint_address,
+            to_address,
+            amount,
+            decimals ?? 9
+          );
+
+          // Record in local ledger
+          const tokenId = `sol:${mint_address}`;
+          const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+          const keyId = (agent as any).state?.keyId || "unknown";
+          // Use a dummy transfer in economic manager to record the ledger entry
+          const myAgentId = agent.getAgentInfo().agent_id;
+          economic.transfer(
+            `solana:${to_address}` as any,
+            tokenId,
+            amount,
+            privateKey,
+            keyId
+          );
+          saveEconomicState(dataDir, economic);
+
+          json(res, 200, {
+            success: true,
+            tx_signature: result.txSignature,
+            explorer_url: result.explorerUrl,
+          });
+        } catch (err) {
+          json(res, 422, { success: false, error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && path === "/solana/token/balance") {
+        try {
+          const mintAddress = url.searchParams.get("mint_address");
+          const ownerAddress = url.searchParams.get("owner_address") || solanaKeypair.publicKey.toBase58();
+          if (!mintAddress) {
+            json(res, 400, { error: "mint_address required" });
+            return;
+          }
+          const balance = await solana.getTokenBalance(ownerAddress, mintAddress);
+          json(res, 200, {
+            owner: ownerAddress,
+            mint_address: mintAddress,
+            ...balance,
+            explorer_url: solana.explorerUrl("address", ownerAddress),
+          });
+        } catch (err) {
+          json(res, 422, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && path === "/solana/token/info") {
+        try {
+          const mintAddress = url.searchParams.get("mint_address");
+          if (!mintAddress) {
+            json(res, 400, { error: "mint_address required" });
+            return;
+          }
+          const info = await solana.getTokenInfo(mintAddress);
+          json(res, 200, {
+            mint_address: mintAddress,
+            ...info,
+            explorer_url: solana.explorerUrl("address", mintAddress),
+          });
+        } catch (err) {
+          json(res, 422, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      // ============================================================
       // Security Policy routes
       // ============================================================
 
@@ -1245,6 +1445,17 @@ async function main() {
   const auctionOrigins = new Map<string, AgentId>();
   const taskPolicy = new TaskPolicyManager(config.agentId);
 
+  // --- Solana on-chain setup ---
+  const solana = new SolanaClient({
+    network: config.solanaNetwork,
+    rpcUrl: config.solanaRpcUrl || undefined,
+  });
+  // Derive Solana keypair from agent's Ed25519 private key (same key type)
+  const solanaKeypair = solana.keypairFromPrivateKey(agent.getPrivateKey());
+  console.error(`[Solana] Network: ${config.solanaNetwork}`);
+  console.error(`[Solana] Wallet: ${solanaKeypair.publicKey.toBase58()}`);
+  console.error(`[Solana] Explorer: ${solana.explorerUrl("address", solanaKeypair.publicKey.toBase58())}`);
+
   // Auto-set default peer config when a peer connects (if not already set via invite)
   (agent as any).swarm.on("peer:identified", (peer: any) => {
     if (peer.agentId && !taskManager.getPeerConfig(peer.agentId)) {
@@ -1476,7 +1687,9 @@ async function main() {
     billing,
     profileManager,
     taskPolicy,
-    config.dataDir
+    config.dataDir,
+    solana,
+    solanaKeypair
   );
 
   // Discovery site integration
