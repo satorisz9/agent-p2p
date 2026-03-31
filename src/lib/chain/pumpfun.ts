@@ -46,7 +46,8 @@ const PUMP_MINT_AUTHORITY = PublicKey.findProgramAddressSync(
 )[0];
 
 // Global volume accumulator — new required account (program update)
-const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey("CmLFbnw7dyQkAfQEzZPHR3p9VnAB4wogjzTeDRAgTsRR");
+// PDA: seeds=["global_volume_accumulator"], program=6EF8rrecth...
+const GLOBAL_VOLUME_ACCUMULATOR = new PublicKey("Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y");
 
 export interface PumpFunConfig {
   rpcUrl?: string;
