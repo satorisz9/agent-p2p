@@ -43,6 +43,7 @@ import { WorkspaceIntrospector } from "../lib/matching/introspect";
 import { TaskPolicyManager } from "../lib/security/policy";
 import { SolanaClient } from "../lib/chain/solana";
 import { PumpFunClient } from "../lib/chain/pumpfun";
+import { ProjectManager } from "../lib/project/manager";
 import type {
   AgentId,
   AuctionRecord,
@@ -222,7 +223,8 @@ function createDaemonApi(
   dataDir: string,
   solana: SolanaClient,
   solanaKeypair: import("@solana/web3.js").Keypair,
-  pumpfun: PumpFunClient
+  pumpfun: PumpFunClient,
+  projectManager: ProjectManager
 ) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
@@ -1034,6 +1036,118 @@ function createDaemonApi(
       }
 
       // ============================================================
+      // Project (Virtual Company) routes
+      // ============================================================
+
+      if (req.method === "POST" && path === "/project/create") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const myAgentId = agent.getAgentInfo().agent_id;
+          const { name, description, funding_goal, tasks, launch_on_pumpfun, image_base64 } = body;
+          if (!name || !tasks?.length) {
+            json(res, 400, { error: "name and tasks required" });
+            return;
+          }
+
+          let tokenId = body.token_id;
+          let mintAddress: string | undefined;
+          let pumpFunUrl: string | undefined;
+
+          // Optionally launch token on pump.fun
+          if (launch_on_pumpfun) {
+            const imageBuffer = image_base64
+              ? Buffer.from(image_base64, "base64")
+              : Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==", "base64");
+            const launchResult = await pumpfun.launch(
+              solanaKeypair, name, body.symbol || name.substring(0, 4).toUpperCase(),
+              description || name,
+              imageBuffer, "token.png", 0,
+              { website: body.website }
+            );
+            if (launchResult.success) {
+              mintAddress = launchResult.mintAddress;
+              tokenId = `pumpfun:${mintAddress}`;
+              pumpFunUrl = launchResult.pumpFunUrl;
+              economic.registerExternalToken(tokenId, name, body.symbol || "TOK", 6, "solana", mintAddress);
+              saveEconomicState(dataDir, economic);
+            } else {
+              json(res, 422, { error: `Token launch failed: ${launchResult.error}` });
+              return;
+            }
+          }
+
+          // If no token provided, issue a local one
+          if (!tokenId) {
+            const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
+            const keyId = (agent as any).state?.keyId || "unknown";
+            const token = economic.issueToken(name, body.symbol || "TOK", 6, funding_goal || 1000000, privateKey, keyId);
+            tokenId = token.token_id;
+            saveEconomicState(dataDir, economic);
+          }
+
+          const project = projectManager.createProject(
+            myAgentId, name, description || "", tokenId, funding_goal || 0,
+            tasks, mintAddress
+          );
+
+          json(res, 200, { ...project, pump_fun_url: pumpFunUrl });
+        } catch (err) {
+          json(res, 500, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && path === "/project/fund") {
+        const body = JSON.parse(await readBody(req));
+        const investor = body.investor || agent.getAgentInfo().agent_id;
+        const result = projectManager.fund(body.project_id, investor, body.amount);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/project/task/assign") {
+        const body = JSON.parse(await readBody(req));
+        const result = projectManager.assignTask(body.project_id, body.task_id, body.agent_id);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/project/task/complete") {
+        const body = JSON.parse(await readBody(req));
+        const result = projectManager.completeTask(body.project_id, body.task_id, body.proof_id);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "POST" && path === "/project/task/fail") {
+        const body = JSON.parse(await readBody(req));
+        const result = projectManager.failTask(body.project_id, body.task_id);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/project/distribute") {
+        const projectId = url.searchParams.get("project_id");
+        if (!projectId) { json(res, 400, { error: "project_id required" }); return; }
+        const result = projectManager.calculateDistribution(projectId);
+        json(res, result.success ? 200 : 422, result);
+        return;
+      }
+
+      if (req.method === "GET" && path === "/project/list") {
+        const status = url.searchParams.get("status") as any;
+        json(res, 200, { projects: projectManager.listProjects(status || undefined) });
+        return;
+      }
+
+      if (req.method === "GET" && path.startsWith("/project/") && !path.includes("/task/")) {
+        const projectId = path.split("/")[2];
+        const project = projectManager.getProject(projectId);
+        json(res, project ? 200 : 404, project || { error: "Not found" });
+        return;
+      }
+
+      // ============================================================
       // Pump.fun routes
       // ============================================================
 
@@ -1564,6 +1678,9 @@ async function main() {
   console.error(`[Solana] Explorer: ${solana.explorerUrl("address", solanaKeypair.publicKey.toBase58())}`);
 
   // --- Pump.fun setup ---
+  // --- Project Manager setup ---
+  const projectManager = new ProjectManager();
+
   const pumpfun = new PumpFunClient({
     rpcUrl: config.solanaRpcUrl || undefined,
   });
@@ -1802,7 +1919,8 @@ async function main() {
     config.dataDir,
     solana,
     solanaKeypair,
-    pumpfun
+    pumpfun,
+    projectManager
   );
 
   // Discovery site integration
