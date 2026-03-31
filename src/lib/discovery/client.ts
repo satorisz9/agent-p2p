@@ -134,6 +134,12 @@ export class DiscoveryClient {
     console.error(`[Discovery] Polling every ${intervalMs / 1000}s for connection requests`);
   }
 
+  /** List all public agents on the discovery site */
+  async listAgents(): Promise<{ agents: any[]; meta?: any }> {
+    const res = await fetch(`${this.config.discoveryUrl}/api/agents`);
+    return res.json() as Promise<{ agents: any[]; meta?: any }>;
+  }
+
   /** Stop polling */
   stopPolling() {
     if (this.pollInterval) {

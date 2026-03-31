@@ -1396,6 +1396,16 @@ function addDiscoveryRoutes(
         }
       }
 
+      if (req.method === "GET" && path === "/discovery/agents") {
+        try {
+          const data = await discovery.listAgents();
+          json(res, 200, data);
+        } catch (err) {
+          json(res, 502, { error: `Discovery fetch failed: ${(err as Error).message}` });
+        }
+        return true;
+      }
+
       return false;
     },
   };
@@ -1736,6 +1746,31 @@ async function main() {
       for (const listener of originalListeners) {
         listener(req, res);
       }
+    });
+  }
+
+  // Fallback: /discovery/agents works even without --discovery-url
+  if (!discovery) {
+    const originalListeners2 = httpServer.listeners('request') as Function[];
+    httpServer.removeAllListeners('request');
+    httpServer.on('request', async (req: IncomingMessage, res: ServerResponse) => {
+      const url = new URL(req.url ?? '/', `http://localhost:${config.port}`);
+      if (req.method === "GET" && url.pathname === "/discovery/agents") {
+        // Check auth
+        if (!checkBearerAuth(req, apiToken)) {
+          json(res, 401, { error: "Unauthorized" });
+          return;
+        }
+        try {
+          const resp = await fetch("https://agent-p2p-discovery.pages.dev/api/agents");
+          const data = await resp.json();
+          json(res, 200, data);
+        } catch (err) {
+          json(res, 502, { error: `Discovery fetch failed: ${(err as Error).message}` });
+        }
+        return;
+      }
+      for (const listener of originalListeners2) listener(req, res);
     });
   }
 

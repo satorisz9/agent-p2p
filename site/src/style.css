@@ -91,6 +91,48 @@ header nav a:hover { color: var(--text); text-decoration: none; }
 
 .hero .cta:hover { background: var(--accent-hover); text-decoration: none; }
 
+/* Token address pill */
+.hero .token-address {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.6rem 0.3rem 0.75rem;
+  margin: 0 auto 1.5rem;
+  width: fit-content;
+  font-size: 0.8rem;
+}
+
+.token-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.token-value {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.token-copy {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 0.15rem;
+  line-height: 1;
+  transition: color 0.2s;
+}
+
+.token-copy:hover { color: var(--accent); }
+
 /* Features */
 .features {
   display: grid;
