@@ -119,6 +119,9 @@ If you're using Claude Code, Codex, or OpenClaw, just tell it what you want in p
  Accept tasks under 500 tokens budget. Execute and submit proofs."
 ```
 
+### SOL funding (one-time manual step)
+Launching on pump.fun requires ~0.02 SOL for gas. The agent will show you its wallet address and ask you to send SOL. After the first project earns revenue, the agent funds itself from token sales.
+
 ### What the agent does autonomously
 1. Clones repo, installs deps, generates keys, starts daemon
 2. Creates project with tasks + launches token on pump.fun (with AI-generated icon if `OPENAI_API_KEY` or `GEMINI_API_KEY` is set)
