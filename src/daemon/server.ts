@@ -42,6 +42,7 @@ import { ProfileManager } from "../lib/matching/profile";
 import { WorkspaceIntrospector } from "../lib/matching/introspect";
 import { TaskPolicyManager } from "../lib/security/policy";
 import { SolanaClient } from "../lib/chain/solana";
+import { PumpFunClient } from "../lib/chain/pumpfun";
 import type {
   AgentId,
   AuctionRecord,
@@ -220,7 +221,8 @@ function createDaemonApi(
   taskPolicy: TaskPolicyManager,
   dataDir: string,
   solana: SolanaClient,
-  solanaKeypair: import("@solana/web3.js").Keypair
+  solanaKeypair: import("@solana/web3.js").Keypair,
+  pumpfun: PumpFunClient
 ) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
@@ -1032,6 +1034,101 @@ function createDaemonApi(
       }
 
       // ============================================================
+      // Pump.fun routes
+      // ============================================================
+
+      if (req.method === "POST" && path === "/pumpfun/launch") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const { name, symbol, description, image_base64, initial_buy_sol, twitter, telegram, website } = body;
+          if (!name || !symbol || !description) {
+            json(res, 400, { error: "name, symbol, and description required" });
+            return;
+          }
+          // Image: accept base64 or use a default 1x1 pixel PNG
+          const imageBuffer = image_base64
+            ? Buffer.from(image_base64, "base64")
+            : Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+
+          const result = await pumpfun.launch(
+            solanaKeypair,
+            name,
+            symbol,
+            description,
+            imageBuffer,
+            "token.png",
+            initial_buy_sol || 0,
+            { twitter, telegram, website }
+          );
+
+          if (result.success && result.mintAddress) {
+            // Register in local economic state
+            const tokenId = `pumpfun:${result.mintAddress}`;
+            economic.registerExternalToken(
+              tokenId, name, symbol, 6, "solana", result.mintAddress
+            );
+            saveEconomicState(dataDir, economic);
+          }
+
+          json(res, result.success ? 200 : 422, result);
+        } catch (err) {
+          json(res, 500, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && path === "/pumpfun/buy") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const { mint_address, sol_amount, slippage_bps } = body;
+          if (!mint_address || !sol_amount) {
+            json(res, 400, { error: "mint_address and sol_amount required" });
+            return;
+          }
+          const result = await pumpfun.buy(
+            solanaKeypair, mint_address, sol_amount, slippage_bps || 500
+          );
+          json(res, result.success ? 200 : 422, result);
+        } catch (err) {
+          json(res, 500, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && path === "/pumpfun/sell") {
+        try {
+          const body = JSON.parse(await readBody(req));
+          const { mint_address, token_amount, slippage_bps } = body;
+          if (!mint_address || !token_amount) {
+            json(res, 400, { error: "mint_address and token_amount required" });
+            return;
+          }
+          const result = await pumpfun.sell(
+            solanaKeypair, mint_address, token_amount, slippage_bps || 500
+          );
+          json(res, result.success ? 200 : 422, result);
+        } catch (err) {
+          json(res, 500, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && path === "/pumpfun/curve") {
+        try {
+          const mintAddress = url.searchParams.get("mint_address");
+          if (!mintAddress) {
+            json(res, 400, { error: "mint_address required" });
+            return;
+          }
+          const curve = await pumpfun.getBondingCurve(mintAddress);
+          json(res, 200, { mint_address: mintAddress, ...curve });
+        } catch (err) {
+          json(res, 500, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      // ============================================================
       // Security Policy routes
       // ============================================================
 
@@ -1466,6 +1563,11 @@ async function main() {
   console.error(`[Solana] Wallet: ${solanaKeypair.publicKey.toBase58()}`);
   console.error(`[Solana] Explorer: ${solana.explorerUrl("address", solanaKeypair.publicKey.toBase58())}`);
 
+  // --- Pump.fun setup ---
+  const pumpfun = new PumpFunClient({
+    rpcUrl: config.solanaRpcUrl || undefined,
+  });
+
   // Auto-set default peer config when a peer connects (if not already set via invite)
   (agent as any).swarm.on("peer:identified", (peer: any) => {
     if (peer.agentId && !taskManager.getPeerConfig(peer.agentId)) {
@@ -1699,7 +1801,8 @@ async function main() {
     taskPolicy,
     config.dataDir,
     solana,
-    solanaKeypair
+    solanaKeypair,
+    pumpfun
   );
 
   // Discovery site integration
