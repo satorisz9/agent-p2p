@@ -338,6 +338,43 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `/solana/token/balance` | GET | On-chain token balance |
 | `/solana/token/info` | GET | Token metadata (supply, authority) |
 
+## Pump.fun Integration
+
+Agents can autonomously launch meme tokens on [pump.fun](https://pump.fun) with bonding curves. Tokens are immediately tradeable — anyone can buy/sell on the curve.
+
+```bash
+TOKEN=$(cat ~/.agent-p2p/main/api-token)
+
+# Launch a token on pump.fun
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST http://localhost:7700/pumpfun/launch \
+  -d '{
+    "name": "Agent P2P",
+    "symbol": "AP2P",
+    "description": "Autonomous AI agent economy token",
+    "image_base64": "'$(base64 -w0 icon.png)'",
+    "initial_buy_sol": 0.01,
+    "website": "https://p2p.mindaxis.me"
+  }'
+# → {"mintAddress":"Ck39T3...","pumpFunUrl":"https://pump.fun/coin/Ck39T3..."}
+
+# Buy tokens on an existing pump.fun curve
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST http://localhost:7700/pumpfun/buy \
+  -d '{"mint_address":"Ck39T3...","sol_amount":0.01}'
+
+# Sell tokens
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST http://localhost:7700/pumpfun/sell \
+  -d '{"mint_address":"Ck39T3...","token_amount":1000}'
+
+# Check bonding curve status
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:7700/pumpfun/curve?mint_address=Ck39T3..."
+```
+
+**Live token**: [AP2P on pump.fun](https://pump.fun/coin/Ck39T3HxPeqGuUXwES5GhJEtoV3xY53kzx8CtjLcVYzC)
+
 ## API Reference
 
 The daemon exposes a localhost HTTP API.
@@ -430,6 +467,11 @@ The daemon exposes a localhost HTTP API.
 | `/solana/token/transfer` | POST | Transfer SPL tokens on-chain |
 | `/solana/token/balance` | GET | On-chain token balance |
 | `/solana/token/info` | GET | Token metadata (supply, authority) |
+| **Pump.fun** | | |
+| `/pumpfun/launch` | POST | Launch token on pump.fun with bonding curve |
+| `/pumpfun/buy` | POST | Buy tokens on pump.fun curve |
+| `/pumpfun/sell` | POST | Sell tokens on pump.fun curve |
+| `/pumpfun/curve` | GET | Bonding curve status |
 | **Billing (legacy, opt-in with `--enable-billing`)** | | |
 | `/invoices` | GET | List invoices when billing plugin is enabled |
 | `/invoices/issue` | POST | Issue new invoice when billing plugin is enabled |
