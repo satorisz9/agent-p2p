@@ -131,6 +131,34 @@ type SwarmTaskApi = {
   sendTaskMessage: (targetAgentId: AgentId, type: string, payload: unknown) => boolean;
 };
 
+// --- Economic state persistence ---
+
+const ECONOMIC_STATE_FILE = "economic-state.json";
+
+function loadEconomicState(dataDir: string, economic: EconomicManager): void {
+  const file = join(dataDir, ECONOMIC_STATE_FILE);
+  if (!existsSync(file)) return;
+  try {
+    const data = JSON.parse(readFileSync(file, "utf8"));
+    economic.load(data);
+    const tokenCount = Object.keys(data.tokens || {}).length;
+    const walletCount = Object.keys(data.wallets || {}).length;
+    console.error(`[Economic] Loaded state: ${tokenCount} tokens, ${walletCount} wallets, ${(data.ledger || []).length} ledger entries`);
+  } catch (err) {
+    console.error(`[Economic] WARNING: Failed to load state from ${file}: ${(err as Error).message}`);
+  }
+}
+
+function saveEconomicState(dataDir: string, economic: EconomicManager): void {
+  const file = join(dataDir, ECONOMIC_STATE_FILE);
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(file, JSON.stringify(economic.serialize(), null, 2));
+  } catch (err) {
+    console.error(`[Economic] WARNING: Failed to save state to ${file}: ${(err as Error).message}`);
+  }
+}
+
 function broadcastAuctionTask(agent: P2PAgent, broadcast: TaskBroadcast): number {
   const swarm = (agent as any).swarm as SwarmTaskApi;
   if (typeof swarm.broadcastTask === "function") {
@@ -186,7 +214,8 @@ function createDaemonApi(
   auctionOrigins: Map<string, AgentId>,
   billing: BillingPlugin | null,
   profileManager: ProfileManager,
-  taskPolicy: TaskPolicyManager
+  taskPolicy: TaskPolicyManager,
+  dataDir: string
 ) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
@@ -637,6 +666,7 @@ function createDaemonApi(
           body.name, body.symbol, body.decimals || 18,
           body.initial_supply || 0, privateKey, keyId
         );
+        saveEconomicState(dataDir, economic);
         json(res, 200, token);
         return;
       }
@@ -647,6 +677,7 @@ function createDaemonApi(
           body.token_id, body.name, body.symbol,
           body.decimals || 18, body.chain, body.contract_address
         );
+        saveEconomicState(dataDir, economic);
         json(res, 200, token);
         return;
       }
@@ -661,6 +692,7 @@ function createDaemonApi(
         const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
         const keyId = (agent as any).state?.keyId || "unknown";
         const result = economic.mint(body.token_id, body.amount, privateKey, keyId);
+        if (result.success) saveEconomicState(dataDir, economic);
         json(res, result.success ? 200 : 422, result);
         return;
       }
@@ -669,7 +701,22 @@ function createDaemonApi(
         const body = JSON.parse(await readBody(req));
         const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
         const keyId = (agent as any).state?.keyId || "unknown";
-        const result = economic.transfer(body.to as AgentId, body.token_id, body.amount, privateKey, keyId);
+        const myAgentId = agent.getAgentInfo().agent_id;
+        const toAgentId = body.to as AgentId;
+        const result = economic.transfer(toAgentId, body.token_id, body.amount, privateKey, keyId);
+        if (result.success) {
+          saveEconomicState(dataDir, economic);
+          // Notify recipient via P2P so they can credit their local ledger
+          const swarm = (agent as any).swarm as SwarmTaskApi;
+          const lastEntry = economic.getLedger(1)[0];
+          swarm.sendTaskMessage(toAgentId, "token_transfer" as any, {
+            from: myAgentId,
+            to: toAgentId,
+            token_id: body.token_id,
+            amount: body.amount,
+            ledger_entry: lastEntry,
+          });
+        }
         json(res, result.success ? 200 : 422, result);
         return;
       }
@@ -710,6 +757,7 @@ function createDaemonApi(
       if (req.method === "POST" && path === "/offer/create") {
         const body = JSON.parse(await readBody(req));
         const offer = economic.createOffer(body.task_id, body.to as AgentId, body.token_id, body.amount);
+        saveEconomicState(dataDir, economic);
         json(res, 200, offer);
         return;
       }
@@ -724,6 +772,7 @@ function createDaemonApi(
         const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
         const keyId = (agent as any).state?.keyId || "unknown";
         const result = economic.lockEscrow(body.offer_id, privateKey, keyId);
+        if (result.success) saveEconomicState(dataDir, economic);
         json(res, result.success ? 200 : 422, result);
         return;
       }
@@ -738,6 +787,7 @@ function createDaemonApi(
         if (result.success && escrow) {
           reputation.recordTaskCompleted(escrow.to, 0, 0);
         }
+        if (result.success) saveEconomicState(dataDir, economic);
         json(res, result.success ? 200 : 422, result);
         return;
       }
@@ -747,6 +797,7 @@ function createDaemonApi(
         const privateKey = (await import("../lib/crypto/keys")).fromBase64(agent.getPrivateKey());
         const keyId = (agent as any).state?.keyId || "unknown";
         const result = economic.refundEscrow(body.escrow_id, privateKey, keyId);
+        if (result.success) saveEconomicState(dataDir, economic);
         json(res, result.success ? 200 : 422, result);
         return;
       }
@@ -759,6 +810,7 @@ function createDaemonApi(
         if (escrow) {
           reputation.recordDispute(escrow.to);
         }
+        if (result.success) saveEconomicState(dataDir, economic);
         json(res, result.success ? 200 : 422, result);
         return;
       }
@@ -1173,6 +1225,7 @@ async function main() {
   const reputation = new ReputationManager();
   const verifier = new ExecutionVerifier();
   const economic = new EconomicManager(config.agentId);
+  loadEconomicState(config.dataDir, economic);
   const profileManager = new ProfileManager(config.agentId, reputation);
 
   // Auto-detect skills from workspace
@@ -1307,6 +1360,38 @@ async function main() {
     }
   });
 
+  // Handle incoming P2P token transfers
+  (agent as any).swarm.on("token_transfer", ({ from, payload }: any) => {
+    console.error(`[Economic] Received token transfer from ${from}: ${payload.amount} of ${payload.token_id}`);
+    const transfer = payload as {
+      from: AgentId;
+      to: AgentId;
+      token_id: string;
+      amount: number;
+      ledger_entry: any;
+    };
+    // Verify the transfer is addressed to us
+    if (transfer.to !== config.agentId) {
+      console.error(`[Economic] Ignoring transfer not addressed to us (to: ${transfer.to})`);
+      return;
+    }
+    // Credit our wallet with the received tokens
+    // First, ensure token is registered locally (as external reference)
+    if (!economic.getToken(transfer.token_id)) {
+      economic.registerExternalToken(
+        transfer.token_id,
+        transfer.token_id, // name = id as fallback
+        transfer.token_id.split(":").pop()?.split("-")[0] || "???",
+        18,
+        "custom"
+      );
+    }
+    // Credit via the receive method
+    economic.receiveTransfer(transfer.from, transfer.token_id, transfer.amount, transfer.ledger_entry);
+    saveEconomicState(config.dataDir, economic);
+    console.error(`[Economic] Credited ${transfer.amount} of ${transfer.token_id} from ${from}`);
+  });
+
   (agent as any).swarm.on("heartbeat", ({ from, payload }: any) => {
     taskManager.emit("heartbeat:received", { from, ...payload });
     // Cache peer profile from heartbeat
@@ -1390,7 +1475,8 @@ async function main() {
     auctionOrigins,
     billing,
     profileManager,
-    taskPolicy
+    taskPolicy,
+    config.dataDir
   );
 
   // Discovery site integration
@@ -1450,6 +1536,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.error("[Daemon] Shutting down...");
+    saveEconomicState(config.dataDir, economic);
     discovery?.stopPolling();
     planner.destroy();
     taskManager.destroy();

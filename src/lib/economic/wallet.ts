@@ -199,6 +199,41 @@ export class EconomicManager extends EventEmitter {
     return { success: true };
   }
 
+  /** Receive a transfer from a remote peer (credit only, no debit) */
+  receiveTransfer(
+    from: AgentId,
+    tokenId: string,
+    amount: number,
+    remoteLedgerEntry?: LedgerEntry
+  ): void {
+    const wallet = this.ensureWallet(this.agentId);
+    wallet.balances[tokenId] = (wallet.balances[tokenId] || 0) + amount;
+
+    // Record in local ledger as a received transfer
+    const prevHash = this.ledger.length > 0
+      ? hashLedgerEntry(this.ledger[this.ledger.length - 1])
+      : "genesis";
+
+    const entry: LedgerEntry = {
+      entry_id: `ledger_${randomBytes(16).toString("hex")}`,
+      timestamp: new Date().toISOString(),
+      prev_hash: prevHash,
+      from,
+      to: this.agentId,
+      token_id: tokenId,
+      amount,
+      entry_type: "transfer",
+      reference_id: remoteLedgerEntry?.entry_id,
+    };
+    // Attach remote signature as reference (not re-signed locally)
+    if (remoteLedgerEntry?.signature) {
+      entry.signature = remoteLedgerEntry.signature;
+    }
+    this.ledger.push(entry);
+
+    this.emit("transfer:received", { from, to: this.agentId, token_id: tokenId, amount });
+  }
+
   // ============================================================
   // Payment Offers & Escrow
   // ============================================================
