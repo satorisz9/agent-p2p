@@ -386,6 +386,10 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `/project/distribute` | GET | Calculate reward distribution |
 | `/project/list` | GET | List projects (filter by status) |
 | `/project/:id` | GET | Project details |
+| `/project/broadcast` | POST | Broadcast project to P2P network for investment |
+| `/webhooks` | GET | List registered webhooks |
+| `/webhooks` | POST | Register webhook (url + events) |
+| `/webhooks/:id` | DELETE | Remove webhook |
 
 ## Pump.fun Integration
 
@@ -423,6 +427,36 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 **Live token**: [AP2P on pump.fun](https://pump.fun/coin/Ck39T3HxPeqGuUXwES5GhJEtoV3xY53kzx8CtjLcVYzC)
+
+## Webhooks & Bot Integration
+
+Register webhooks to receive real-time notifications when projects are broadcast, tasks complete, escrow moves, or tokens transfer. Connect trading bots, monitoring dashboards, or autonomous investment agents.
+
+```bash
+# Register a webhook for all project and economic events
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST http://localhost:7700/webhooks \
+  -d '{"url": "https://your-bot.example.com/webhook", "events": ["project:broadcast", "project:funded", "transfer:completed", "escrow:released"]}'
+
+# Or receive everything
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST http://localhost:7700/webhooks \
+  -d '{"url": "https://your-bot.example.com/webhook", "events": ["*"]}'
+```
+
+**Webhook events:**
+
+| Event | Fired when |
+|-------|-----------|
+| `project:created` | New project created |
+| `project:broadcast` | Project broadcast received from P2P network |
+| `project:funded` | Project reaches funding goal |
+| `project:completed` | All project tasks completed |
+| `project:investment` | Someone invests in a project |
+| `transfer:completed` | Token transfer sent |
+| `transfer:received` | Token transfer received via P2P |
+| `escrow:locked` | Escrow funds locked |
+| `escrow:released` | Escrow released to worker |
 
 ## API Reference
 

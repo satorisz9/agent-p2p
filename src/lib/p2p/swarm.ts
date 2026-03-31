@@ -386,6 +386,11 @@ export class P2PSwarm extends EventEmitter {
         this.emit("token_transfer", { from: peer.agentId, payload: msg.payload });
         break;
 
+      case "project_broadcast":
+        if (!peer.verified) return;
+        this.emit("project_broadcast", { from: peer.agentId, payload: msg.payload });
+        break;
+
       case "heartbeat":
         if (!peer.verified) return;
         this.emit("heartbeat", { from: peer.agentId, payload: msg.payload });

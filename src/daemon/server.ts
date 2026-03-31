@@ -224,7 +224,8 @@ function createDaemonApi(
   solana: SolanaClient,
   solanaKeypair: import("@solana/web3.js").Keypair,
   pumpfun: PumpFunClient,
-  projectManager: ProjectManager
+  projectManager: ProjectManager,
+  webhooks: Array<{ id: string; url: string; events: string[]; created_at: string }>
 ) {
   const server = createServer(async (req, res) => {
     // Only accept from localhost
@@ -1147,6 +1148,54 @@ function createDaemonApi(
         return;
       }
 
+      if (req.method === "POST" && path === "/project/broadcast") {
+        const body = JSON.parse(await readBody(req));
+        const payload = projectManager.toBroadcast(body.project_id);
+        if (!payload) { json(res, 404, { error: "Project not found" }); return; }
+        const swarm = (agent as any).swarm as SwarmTaskApi;
+        let sent = 0;
+        const peers = typeof swarm.getConnectedPeers === "function" ? swarm.getConnectedPeers() : [];
+        for (const peer of peers) {
+          if (peer.connected && peer.agentId) {
+            if (swarm.sendTaskMessage(peer.agentId as AgentId, "project_broadcast" as any, payload)) sent++;
+          }
+        }
+        json(res, 200, { broadcast: payload, peers_notified: sent });
+        return;
+      }
+
+      // ============================================================
+      // Webhook routes
+      // ============================================================
+
+      if (req.method === "GET" && path === "/webhooks") {
+        json(res, 200, { webhooks: webhooks });
+        return;
+      }
+
+      if (req.method === "POST" && path === "/webhooks") {
+        const body = JSON.parse(await readBody(req));
+        if (!body.url || !body.events) { json(res, 400, { error: "url and events required" }); return; }
+        const hook = {
+          id: `wh_${Date.now().toString(36)}`,
+          url: body.url,
+          events: body.events as string[],
+          created_at: new Date().toISOString(),
+        };
+        webhooks.push(hook);
+        json(res, 200, hook);
+        return;
+      }
+
+      if (req.method === "DELETE" && path.startsWith("/webhooks/")) {
+        const whId = path.split("/")[2];
+        const idx = webhooks.findIndex(w => w.id === whId);
+        if (idx === -1) { json(res, 404, { error: "Webhook not found" }); return; }
+        webhooks.splice(idx, 1);
+        json(res, 200, { deleted: whId });
+        return;
+      }
+
       // ============================================================
       // Pump.fun routes
       // ============================================================
@@ -1681,6 +1730,24 @@ async function main() {
   // --- Project Manager setup ---
   const projectManager = new ProjectManager();
 
+  // --- Webhook system ---
+  const webhooks: Array<{ id: string; url: string; events: string[]; created_at: string }> = [];
+  async function fireWebhook(event: string, data: unknown) {
+    for (const wh of webhooks) {
+      if (wh.events.includes(event) || wh.events.includes("*")) {
+        try {
+          await fetch(wh.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ event, data, timestamp: new Date().toISOString() }),
+          });
+        } catch (err) {
+          console.error(`[Webhook] Failed to notify ${wh.url}: ${(err as Error).message}`);
+        }
+      }
+    }
+  }
+
   const pumpfun = new PumpFunClient({
     rpcUrl: config.solanaRpcUrl || undefined,
   });
@@ -1798,6 +1865,22 @@ async function main() {
       taskManager.updateTaskStatus(payload.task_id, "cancelled");
       reputation.recordTaskCancelled(from);
     }
+  });
+
+  // Wire webhooks to events
+  projectManager.on("project:created", (p: any) => fireWebhook("project:created", p));
+  projectManager.on("project:funded", (p: any) => fireWebhook("project:funded", p));
+  projectManager.on("project:completed", (p: any) => fireWebhook("project:completed", p));
+  projectManager.on("project:investment", (d: any) => fireWebhook("project:investment", d));
+  economic.on("transfer:completed", (d: any) => fireWebhook("transfer:completed", d));
+  economic.on("transfer:received", (d: any) => fireWebhook("transfer:received", d));
+  economic.on("escrow:locked", (d: any) => fireWebhook("escrow:locked", d));
+  economic.on("escrow:released", (d: any) => fireWebhook("escrow:released", d));
+
+  // Handle incoming P2P project broadcasts
+  (agent as any).swarm.on("project_broadcast", ({ from, payload }: any) => {
+    console.error(`[Project] Received broadcast from ${from}: ${payload.name} (${payload.project_id})`);
+    fireWebhook("project:broadcast", { from, ...payload });
   });
 
   // Handle incoming P2P token transfers
@@ -1920,7 +2003,8 @@ async function main() {
     solana,
     solanaKeypair,
     pumpfun,
-    projectManager
+    projectManager,
+    webhooks
   );
 
   // Discovery site integration

@@ -247,6 +247,42 @@ export class ProjectManager extends EventEmitter {
     }
   }
 
+  /**
+   * Generate a broadcast payload for P2P network.
+   * Receiving agents can use this to decide whether to invest.
+   */
+  toBroadcast(projectId: string): {
+    project_id: string;
+    name: string;
+    description: string;
+    creator: string;
+    token_id: string;
+    mint_address?: string;
+    funding_goal: number;
+    funded_amount: number;
+    status: string;
+    task_count: number;
+    total_budget: number;
+    pump_fun_url?: string;
+  } | null {
+    const p = this.projects.get(projectId);
+    if (!p) return null;
+    return {
+      project_id: p.project_id,
+      name: p.name,
+      description: p.description,
+      creator: p.creator,
+      token_id: p.token_id,
+      mint_address: p.mint_address,
+      funding_goal: p.funding_goal,
+      funded_amount: p.funded_amount,
+      status: p.status,
+      task_count: p.tasks.length,
+      total_budget: p.tasks.reduce((s, t) => s + t.budget, 0),
+      pump_fun_url: p.mint_address ? `https://pump.fun/coin/${p.mint_address}` : undefined,
+    };
+  }
+
   destroy(): void {
     this.projects.clear();
     this.removeAllListeners();
