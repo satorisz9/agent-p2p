@@ -27,13 +27,25 @@ export interface ProjectTask {
   proof_id?: string;     // execution proof
 }
 
+export interface ProjectLinks {
+  website?: string;
+  twitter?: string;
+  telegram?: string;
+  discord?: string;
+  github?: string;
+}
+
 export interface Project {
   project_id: string;
   name: string;
   description: string;
   creator: string;       // agent ID
+  creator_name?: string; // human-readable creator name
   token_id: string;      // associated token (local or on-chain)
   mint_address?: string; // on-chain mint address (if pump.fun or SPL)
+  symbol?: string;       // token symbol
+  icon_url?: string;     // token/project icon URL
+  links: ProjectLinks;   // project URLs (website, twitter, etc.)
   funding_goal: number;  // in SOL or token units
   funded_amount: number;
   status: "draft" | "funding" | "active" | "completed" | "failed";
@@ -58,7 +70,13 @@ export class ProjectManager extends EventEmitter {
     tokenId: string,
     fundingGoal: number,
     tasks: Array<{ type: string; description: string; budget: number }>,
-    mintAddress?: string
+    options?: {
+      mintAddress?: string;
+      symbol?: string;
+      creatorName?: string;
+      iconUrl?: string;
+      links?: ProjectLinks;
+    }
   ): Project {
     const projectId = `proj_${randomBytes(8).toString("hex")}`;
 
@@ -75,8 +93,12 @@ export class ProjectManager extends EventEmitter {
       name,
       description,
       creator,
+      creator_name: options?.creatorName,
       token_id: tokenId,
-      mint_address: mintAddress,
+      mint_address: options?.mintAddress,
+      symbol: options?.symbol,
+      icon_url: options?.iconUrl,
+      links: options?.links || {},
       funding_goal: fundingGoal,
       funded_amount: 0,
       status: "funding",
@@ -251,34 +273,29 @@ export class ProjectManager extends EventEmitter {
    * Generate a broadcast payload for P2P network.
    * Receiving agents can use this to decide whether to invest.
    */
-  toBroadcast(projectId: string): {
-    project_id: string;
-    name: string;
-    description: string;
-    creator: string;
-    token_id: string;
-    mint_address?: string;
-    funding_goal: number;
-    funded_amount: number;
-    status: string;
-    task_count: number;
-    total_budget: number;
-    pump_fun_url?: string;
-  } | null {
+  toBroadcast(projectId: string): Record<string, unknown> | null {
     const p = this.projects.get(projectId);
     if (!p) return null;
     return {
       project_id: p.project_id,
       name: p.name,
       description: p.description,
+      symbol: p.symbol,
       creator: p.creator,
+      creator_name: p.creator_name,
+      icon_url: p.icon_url,
+      links: p.links,
       token_id: p.token_id,
       mint_address: p.mint_address,
       funding_goal: p.funding_goal,
       funded_amount: p.funded_amount,
+      funding_progress: p.funding_goal > 0 ? Math.round((p.funded_amount / p.funding_goal) * 100) : 0,
       status: p.status,
       task_count: p.tasks.length,
+      task_types: [...new Set(p.tasks.map(t => t.type))],
       total_budget: p.tasks.reduce((s, t) => s + t.budget, 0),
+      investor_count: Object.keys(p.investors).length,
+      created_at: p.created_at,
       pump_fun_url: p.mint_address ? `https://pump.fun/coin/${p.mint_address}` : undefined,
     };
   }

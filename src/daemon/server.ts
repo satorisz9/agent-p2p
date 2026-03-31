@@ -1044,7 +1044,8 @@ function createDaemonApi(
         try {
           const body = JSON.parse(await readBody(req));
           const myAgentId = agent.getAgentInfo().agent_id;
-          const { name, description, funding_goal, tasks, launch_on_pumpfun, image_base64 } = body;
+          const { name, description, funding_goal, tasks, launch_on_pumpfun, image_base64,
+                  creator_name, icon_url, website, twitter, telegram, discord, github } = body;
           if (!name || !tasks?.length) {
             json(res, 400, { error: "name and tasks required" });
             return;
@@ -1063,7 +1064,7 @@ function createDaemonApi(
               solanaKeypair, name, body.symbol || name.substring(0, 4).toUpperCase(),
               description || name,
               imageBuffer, "token.png", 0,
-              { website: body.website }
+              { website, twitter, telegram }
             );
             if (launchResult.success) {
               mintAddress = launchResult.mintAddress;
@@ -1088,7 +1089,13 @@ function createDaemonApi(
 
           const project = projectManager.createProject(
             myAgentId, name, description || "", tokenId, funding_goal || 0,
-            tasks, mintAddress
+            tasks, {
+              mintAddress,
+              symbol: body.symbol,
+              creatorName: creator_name,
+              iconUrl: icon_url,
+              links: { website, twitter, telegram, discord, github },
+            }
           );
 
           json(res, 200, { ...project, pump_fun_url: pumpFunUrl });
