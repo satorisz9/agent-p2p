@@ -28,6 +28,11 @@ const FEE_CONFIG = PublicKey.findProgramAddressSync([Buffer.from("fee_config"), 
 
 const BUY_DISCRIMINATOR = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
 const SELL_DISCRIMINATOR = Buffer.from([51, 230, 133, 164, 1, 127, 131, 173]);
+// collect_creator_fee: Anchor discriminator hash("global:collect_creator_fee")[0..8]
+const COLLECT_CREATOR_FEE_DISCRIMINATOR = (() => {
+  const { createHash } = require("crypto");
+  return Buffer.from(createHash("sha256").update("global:collect_creator_fee").digest().subarray(0, 8));
+})();
 
 function deriveBondingCurve(mint: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from("bonding-curve"), mint.toBytes()], PUMP_PROGRAM)[0];
@@ -214,6 +219,61 @@ export class PumpFunClient {
       const sig = await sendAndConfirmTransaction(this.connection, tx, [seller], { commitment: "confirmed" });
       return { success: true, txSignature: sig, explorerUrl: `https://solscan.io/tx/${sig}` };
     } catch (err: any) { return { success: false, error: err.message }; }
+  }
+
+  /**
+   * Collect accumulated creator fees from the creator vault.
+   * Returns SOL to the creator's wallet.
+   */
+  async collectCreatorFees(creator: Keypair): Promise<TradeResult> {
+    try {
+      const creatorVault = deriveCreatorVault(creator.publicKey);
+
+      // Check vault balance first
+      const vaultBal = await this.connection.getBalance(creatorVault);
+      if (vaultBal === 0) {
+        return { success: false, error: "Creator vault is empty" };
+      }
+
+      const tx = new Transaction();
+      tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 100000 }));
+      tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 250000 }));
+
+      tx.add(new TransactionInstruction({
+        programId: PUMP_PROGRAM,
+        keys: [
+          { pubkey: creator.publicKey, isSigner: true, isWritable: true },
+          { pubkey: creatorVault, isSigner: false, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          { pubkey: PUMP_EVENT_AUTHORITY, isSigner: false, isWritable: false },
+          { pubkey: PUMP_PROGRAM, isSigner: false, isWritable: false },
+        ],
+        data: COLLECT_CREATOR_FEE_DISCRIMINATOR,
+      }));
+
+      const sig = await sendAndConfirmTransaction(this.connection, tx, [creator], { commitment: "confirmed" });
+      return {
+        success: true,
+        txSignature: sig,
+        explorerUrl: `https://solscan.io/tx/${sig}`,
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Check creator vault balance (accumulated fees).
+   */
+  async getCreatorVaultBalance(creatorAddress: string): Promise<{ address: string; balance_sol: number; balance_lamports: number }> {
+    const creator = new PublicKey(creatorAddress);
+    const vault = deriveCreatorVault(creator);
+    const bal = await this.connection.getBalance(vault);
+    return {
+      address: vault.toBase58(),
+      balance_sol: bal / LAMPORTS_PER_SOL,
+      balance_lamports: bal,
+    };
   }
 
   async getBondingCurve(mintAddress: string): Promise<{

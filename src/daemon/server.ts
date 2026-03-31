@@ -1077,7 +1077,7 @@ function createDaemonApi(
             const launchResult = await pumpfun.launch(
               solanaKeypair, name, body.symbol || name.substring(0, 4).toUpperCase(),
               description || name,
-              imageBuffer, "token.png", 0,
+              imageBuffer, "token.png", body.initial_buy_sol || 0,
               { website, twitter, telegram }
             );
             if (launchResult.success) {
@@ -1314,6 +1314,26 @@ function createDaemonApi(
             solanaKeypair, mint_address, token_amount, slippage_bps || 500
           );
           json(res, result.success ? 200 : 422, result);
+        } catch (err) {
+          json(res, 500, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "POST" && path === "/pumpfun/collect-fees") {
+        try {
+          const result = await pumpfun.collectCreatorFees(solanaKeypair);
+          json(res, result.success ? 200 : 422, result);
+        } catch (err) {
+          json(res, 500, { error: (err as Error).message });
+        }
+        return;
+      }
+
+      if (req.method === "GET" && path === "/pumpfun/creator-vault") {
+        try {
+          const result = await pumpfun.getCreatorVaultBalance(solanaKeypair.publicKey.toBase58());
+          json(res, 200, result);
         } catch (err) {
           json(res, 500, { error: (err as Error).message });
         }
