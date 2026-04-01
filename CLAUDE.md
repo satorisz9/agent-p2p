@@ -59,6 +59,72 @@ tail -f ~/.agent-p2p/myagent/daemon.log
 kill $(cat ~/.agent-p2p/myagent/daemon.pid)
 ```
 
+### MCP サーバー登録（Claude Code 連携）
+
+MCP サーバーは stdio プロキシ。デーモンへの HTTP リクエストを MCP ツール呼び出しに変換する。
+
+**前提**: デーモンが起動済みであること。
+
+#### CLI で登録
+```bash
+claude mcp add agent-p2p -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
+  --daemon-url http://127.0.0.1:7700 \
+  --data-dir ~/.agent-p2p/myagent
+```
+
+#### settings.json で登録（`~/.claude/settings.json` or `.claude/settings.json`）
+```json
+{
+  "mcpServers": {
+    "agent-p2p": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "/absolute/path/to/agent-p2p/src/mcp/server.ts",
+        "--daemon-url", "http://127.0.0.1:7700",
+        "--data-dir", "/home/user/.agent-p2p/myagent"
+      ]
+    }
+  }
+}
+```
+
+#### 引数
+| 引数 | 必須 | デフォルト | 説明 |
+|------|------|-----------|------|
+| `--daemon-url` | No | `http://127.0.0.1:7700` | デーモンの URL |
+| `--data-dir` | No | (なし) | データディレクトリ。`api-token` ファイルを自動読み込み |
+| `--api-token` | No | (なし) | API トークン直接指定（`--data-dir` の代替） |
+
+環境変数でも指定可: `AGENT_DAEMON_URL`, `AGENT_DATA_DIR`, `AGENT_API_TOKEN`
+
+#### 複数エージェント
+```bash
+claude mcp add agent-alice -- npx tsx /path/to/src/mcp/server.ts \
+  --daemon-url http://127.0.0.1:7700 --data-dir ~/.agent-p2p/alice
+claude mcp add agent-bob -- npx tsx /path/to/src/mcp/server.ts \
+  --daemon-url http://127.0.0.1:7701 --data-dir ~/.agent-p2p/bob
+```
+
+#### 確認
+```bash
+claude mcp list
+# 起動時 stderr に [MCP] Connected to daemon: agent:yourorg:name が出れば OK
+```
+
+#### MCP ツール一覧
+`agent_info`, `peer_list`, `task_request`, `task_list`, `task_respond`, `file_send`, `reputation_query`, `wallet_balance`, `token_issue`, `escrow_lock`, `escrow_release`, `auction_create`, `auction_list`, `auction_bid`, `auction_finalize`, `inbox_list`, `inbox_process`
+
+billing 有効時は追加: `invoice_issue`, `invoice_status`, `invoice_list`, `invoice_accept`, `invoice_reject`, `audit_log`
+
+#### MCP リソース
+- `agent://identity` — エージェント ID・公開鍵・接続情報
+- `agent://tasks` — 全タスクとステータス
+- `agent://reputation` — 信頼スコア一覧
+- `agent://invoices` — 請求書一覧（billing 有効時のみ）
+
+タスク通知: 5秒ごとにデーモンをポーリングし、新着タスクで `notifications/resources/updated` を送信
+
 ## プロジェクト構成
 
 ```

@@ -181,25 +181,129 @@ curl -H "Authorization: Bearer $(cat ~/.agent-p2p/myagent/api-token)" \
   -X POST http://localhost:7700/discovery/unregister
 ```
 
-### 5. Use with AI coding agents
+### 5. Use with AI coding agents (MCP integration)
+
+The MCP server is a lightweight stdio proxy that connects AI coding agents to your running daemon. The daemon handles all P2P logic; the MCP server just translates tool calls to HTTP requests.
+
+#### Prerequisites
+
+1. **Daemon must be running first** — the MCP server connects to it via HTTP
+2. **Node.js 18+** and **npm** installed
+3. **Dependencies installed** in the agent-p2p directory (`npm install`)
+
+#### Claude Code (recommended)
 
 ```bash
-# Claude Code: add as MCP server (with daemon URL and data dir)
+# Register MCP server with Claude Code
 claude mcp add agent-p2p -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
   --daemon-url http://127.0.0.1:7700 \
   --data-dir ~/.agent-p2p/myagent
+```
 
-# Codex: run alongside your agent
+**Arguments:**
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `--daemon-url` | No | `http://127.0.0.1:7700` | URL of the running daemon |
+| `--data-dir` | No | (none) | Path to agent data directory. Used to auto-read the `api-token` file for authentication |
+| `--api-token` | No | (none) | Explicit API token (alternative to `--data-dir`) |
+
+**Environment variables** (alternative to CLI args):
+
+| Variable | Description |
+|----------|-------------|
+| `AGENT_DAEMON_URL` | Daemon URL (overridden by `--daemon-url`) |
+| `AGENT_DATA_DIR` | Data directory (overridden by `--data-dir`) |
+| `AGENT_API_TOKEN` | API token (overridden by `--api-token`) |
+
+**Multiple agents**: Register each agent with a unique name:
+
+```bash
+claude mcp add agent-alice -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
+  --daemon-url http://127.0.0.1:7700 \
+  --data-dir ~/.agent-p2p/alice
+
+claude mcp add agent-bob -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
+  --daemon-url http://127.0.0.1:7701 \
+  --data-dir ~/.agent-p2p/bob
+```
+
+**Or add directly to `settings.json`** (`~/.claude/settings.json` for global, `.claude/settings.json` for project):
+
+```json
+{
+  "mcpServers": {
+    "agent-p2p": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "/absolute/path/to/agent-p2p/src/mcp/server.ts",
+        "--daemon-url", "http://127.0.0.1:7700",
+        "--data-dir", "/home/user/.agent-p2p/myagent"
+      ]
+    }
+  }
+}
+```
+
+**Verify registration:**
+
+```bash
+# List registered MCP servers
+claude mcp list
+
+# Check that daemon is reachable (stderr shows connection status on startup)
+# You should see: [MCP] Connected to daemon: agent:yourorg:name
+```
+
+#### Other AI agents
+
+```bash
+# Codex: run alongside your daemon
 codex -m gpt-5.4 --full-auto -q "use agent-p2p to send data"
 
 # OpenClaw: add as MCP server
-openclaw mcp add agent-p2p -- npx tsx src/mcp/server.ts \
-  --daemon-url http://127.0.0.1:7700
+openclaw mcp add agent-p2p -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
+  --daemon-url http://127.0.0.1:7700 \
+  --data-dir ~/.agent-p2p/myagent
 ```
 
-The MCP server provides Claude Code with direct access to P2P tools (`task_request`, `task_list`, `task_respond`, `file_send`, `auction_create`, etc.) and resources (`agent://tasks`, `agent://identity`, `agent://reputation`).
+#### Available MCP tools
 
-**Task notifications**: The MCP server polls the daemon every 5 seconds for new incoming tasks. When a new task arrives, it sends a `notifications/resources/updated` event to Claude Code, so the agent is notified without manual polling.
+Once registered, the AI agent can use these tools directly:
+
+| Tool | Description |
+|------|-------------|
+| `agent_info` | Get agent identity, public key, connected peers, inbox status |
+| `peer_list` | List connected P2P peers |
+| `task_request` | Send a task to a target peer |
+| `task_list` | List tracked tasks (optional status filter) |
+| `task_respond` | Accept / reject / complete / fail / cancel a task |
+| `file_send` | Send a local file to a peer |
+| `reputation_query` | Query trust scores for a specific agent or all |
+| `wallet_balance` | Query wallet balance for a token |
+| `token_issue` | Issue a new project token |
+| `escrow_lock` | Lock escrow funds for an offer |
+| `escrow_release` | Release escrow after proof verification |
+| `auction_create` | Broadcast a task for bidding |
+| `auction_list` | List auctions (optional status filter) |
+| `auction_bid` | Submit a bid on an auction |
+| `auction_finalize` | Verify proof and release/refund escrow |
+| `inbox_list` | List unprocessed P2P messages |
+| `inbox_process` | Validate and process next inbox message |
+
+With `--enable-billing`: `invoice_issue`, `invoice_status`, `invoice_list`, `invoice_accept`, `invoice_reject`, `audit_log`
+
+#### Available MCP resources
+
+| URI | Description |
+|-----|-------------|
+| `agent://identity` | Agent ID, public key, connection info |
+| `agent://tasks` | All tracked tasks and statuses |
+| `agent://reputation` | Reputation records for known agents |
+| `agent://invoices` | All invoices (billing mode only) |
+
+**Task notifications**: The MCP server polls the daemon every 5 seconds for new incoming tasks. When a new task arrives, it sends a `notifications/resources/updated` event to the AI agent, so it is notified without manual polling.
 
 ### Task types
 
