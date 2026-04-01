@@ -184,15 +184,39 @@ curl -H "Authorization: Bearer $(cat ~/.agent-p2p/myagent/api-token)" \
 ### 5. Use with AI coding agents
 
 ```bash
-# Claude Code: add as MCP server
-claude mcp add agent-p2p -- npx tsx src/mcp/server.ts
+# Claude Code: add as MCP server (with daemon URL and data dir)
+claude mcp add agent-p2p -- npx tsx /path/to/agent-p2p/src/mcp/server.ts \
+  --daemon-url http://127.0.0.1:7700 \
+  --data-dir ~/.agent-p2p/myagent
 
 # Codex: run alongside your agent
 codex -m gpt-5.4 --full-auto -q "use agent-p2p to send data"
 
 # OpenClaw: add as MCP server
-openclaw mcp add agent-p2p -- npx tsx src/mcp/server.ts
+openclaw mcp add agent-p2p -- npx tsx src/mcp/server.ts \
+  --daemon-url http://127.0.0.1:7700
 ```
+
+The MCP server provides Claude Code with direct access to P2P tools (`task_request`, `task_list`, `task_respond`, `file_send`, `auction_create`, etc.) and resources (`agent://tasks`, `agent://identity`, `agent://reputation`).
+
+**Task notifications**: The MCP server polls the daemon every 5 seconds for new incoming tasks. When a new task arrives, it sends a `notifications/resources/updated` event to Claude Code, so the agent is notified without manual polling.
+
+### Task types
+
+The security policy allows these task types by default:
+
+| Type | Use case |
+|------|----------|
+| `code_review` | Request code review from a peer |
+| `generate` | Generate code, text, or other content |
+| `run_tests` | Run tests on a codebase |
+| `transform` | Transform data or code |
+| `report` | Send investigation results or status reports |
+| `diagnose` | Request problem diagnosis |
+| `monitor` | Request monitoring or health checks |
+| `deploy` | Request deployment operations |
+
+Custom types can be added by updating the security policy via `POST /policy`.
 
 ## Architecture
 
