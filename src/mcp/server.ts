@@ -719,6 +719,38 @@ async function main() {
     };
   });
 
+  // --- Task notification poller ---
+  // Poll daemon for new incoming tasks and notify Claude Code via MCP resource update
+  let _lastSeenTaskIds = new Set<string>();
+  async function pollIncomingTasks() {
+    try {
+      const res = (await daemonGet("/task/list")) as { tasks?: Array<{ task_id: string; from: string; status: string; request?: { type?: string; description?: string }; created_at?: number }> };
+      const tasks = res?.tasks || [];
+      const incoming = tasks.filter(t => t.status === "accepted" || t.status === "pending");
+      let hasNew = false;
+      for (const t of incoming) {
+        if (!_lastSeenTaskIds.has(t.task_id)) {
+          _lastSeenTaskIds.add(t.task_id);
+          hasNew = true;
+          console.error(`[MCP] New task received: ${t.task_id} type=${t.request?.type} from=${t.from}`);
+          console.error(`[MCP]   → ${t.request?.description || "(no description)"}`);
+        }
+      }
+      if (hasNew) {
+        // Notify Claude Code that the tasks resource has been updated
+        try {
+          await server.notification({ method: "notifications/resources/updated", params: { uri: "agent://tasks" } });
+        } catch {}
+      }
+    } catch {}
+  }
+  // Initialize with current tasks so we don't notify on startup
+  try {
+    const init = (await daemonGet("/task/list")) as { tasks?: Array<{ task_id: string }> };
+    for (const t of (init?.tasks || [])) _lastSeenTaskIds.add(t.task_id);
+  } catch {}
+  setInterval(pollIncomingTasks, 5000);
+
   // --- Connect ---
   const transport = new StdioServerTransport();
   await server.connect(transport);
