@@ -326,7 +326,7 @@ export type TaskStatus =
 
 export interface TaskRequest {
   task_id: string;
-  type: string;                    // e.g. "code_review", "run_tests", "generate", "transform"
+  type: string;                    // e.g. "code_review", "run_tests", "generate", "transform", "report"
   description: string;
   input: Record<string, unknown>;  // Task-specific input data
   timeout_ms?: number;             // Max execution time
@@ -655,7 +655,7 @@ export interface MatchResult {
 
 /** Worker-side policy: what tasks are allowed */
 export interface TaskPolicy {
-  /** Allowed task types (e.g. ["code_review", "generate"]) */
+  /** Allowed task types (e.g. ["code_review", "generate", "report"]) */
   allowed_types: string[];
   /** Paths that must never be accessed */
   blocked_paths: string[];
@@ -706,7 +706,7 @@ export interface TaskCheckResult {
 /** A task broadcast to all connected peers for bidding */
 export interface TaskBroadcast {
   task_id: string;
-  type: string;                     // e.g. "code_review", "generate"
+  type: string;                     // e.g. "code_review", "generate", "report"
   description: string;
   input: Record<string, unknown>;
   /** Maximum budget the issuer is willing to pay */

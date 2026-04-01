@@ -22,7 +22,7 @@ import type {
 } from "../../types/protocol";
 
 const DEFAULT_POLICY: TaskPolicy = {
-  allowed_types: ["code_review", "generate", "run_tests", "transform"],
+  allowed_types: ["code_review", "generate", "run_tests", "transform", "report", "diagnose", "monitor", "deploy"],
   blocked_paths: [
     "~/.ssh",
     "~/.aws",
