@@ -1900,10 +1900,12 @@ async function main() {
       if (perm.needsApproval) {
         console.error(`[Task] Task ${task.task_id} needs approval`);
         taskManager.emit("task:approval_needed", task);
+        fireWebhook("task:received", { task_id: task.task_id, from, type: payload.type, description: payload.description, needs_approval: true });
       } else {
         taskManager.updateTaskStatus(task.task_id, "accepted");
         (agent as any).swarm.sendTaskMessage(from, "task_accept", { task_id: task.task_id });
         taskManager.emit("task:auto_accepted", task);
+        fireWebhook("task:received", { task_id: task.task_id, from, type: payload.type, description: payload.description });
       }
     } else if (type === "task_accept") {
       taskManager.updateTaskStatus(payload.task_id, "accepted");
