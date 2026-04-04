@@ -632,8 +632,68 @@ Project completes → /project/distribute → rewards to token holders
 | `project:investment` | Someone invests in a project |
 | `transfer:completed` | Token transfer sent |
 | `transfer:received` | Token transfer received via P2P |
+| `task:received` | Incoming task accepted (or needs approval) |
 | `escrow:locked` | Escrow funds locked |
 | `escrow:released` | Escrow released to worker |
+
+## Cross-Agent Notifications (Codex → Claude Code)
+
+Use the daemon's HTTP API to send notifications between agents. For example, a Codex session on a remote server can notify a local Claude Code session when a task completes.
+
+### Setup
+
+**1. Helper script** (`p2p-notify.sh`) on the sending machine:
+
+```bash
+#!/bin/bash
+# Usage: p2p-notify.sh "message text"
+set -euo pipefail
+TOKEN=$(cat ~/.agent-p2p/craft-server/api-token)
+DAEMON="http://127.0.0.1:7700"
+MSG="${1:-task completed}"
+
+curl -sf -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg msg "$MSG" '{
+    target_agent_id: "agent:mindaxis:local",
+    type: "report",
+    description: $msg,
+    input: { source: "codex", timestamp: (now | tostring) }
+  }')" \
+  "$DAEMON/task/request" > /dev/null
+echo "[p2p-notify] sent: $MSG"
+```
+
+**2. Receiving side** (Claude Code with MCP):
+
+The MCP server polls for new tasks every 5 seconds. Or use Claude Code's `CronCreate` to poll `task_list`:
+
+```
+CronCreate: cron="* * * * *", prompt="Check agent-p2p task_list for new notifications"
+```
+
+**3. Webhook (real-time)**: Register a webhook for `task:received` events to get instant push:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST http://localhost:7701/webhooks \
+  -d '{"url": "http://localhost:9999/hook", "events": ["task:received"]}'
+```
+
+### Usage in Codex prompts
+
+Tell Codex to call the script on completion:
+
+```text
+"When done, run: bash ~/scripts/p2p-notify.sh 'task-name completed: <summary>'"
+```
+
+The notification arrives as a task in the receiving agent's task list, readable via `task_list` MCP tool or HTTP API.
+
+### Allowed task types
+
+The security policy only accepts these types by default: `code_review`, `generate`, `run_tests`, `transform`, `report`, `diagnose`, `monitor`, `deploy`. Use `report` for notifications. Custom types can be added via `POST /policy`.
 
 ## API Reference
 
