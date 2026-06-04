@@ -7,7 +7,16 @@ import { sign, verify, toBase64, fromBase64 } from "./keys";
  * This ensures deterministic serialization for signing.
  */
 export function canonicalJson(obj: unknown): string {
-  return JSON.stringify(obj, Object.keys(obj as object).sort());
+  return JSON.stringify(obj, (_key, value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return Object.fromEntries(
+        Object.entries(value).sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0
+        )
+      );
+    }
+    return value;
+  });
 }
 
 /**
