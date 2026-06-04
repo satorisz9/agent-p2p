@@ -12,7 +12,7 @@
 import { createHash, randomBytes } from "crypto";
 import { EventEmitter } from "events";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { dirname, join } from "path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "path";
 
 import { P2PSwarm } from "../lib/p2p/swarm";
 import {
@@ -38,6 +38,23 @@ import type {
   MessageType,
   AgentRegistryEntry,
 } from "../types/protocol";
+
+export function resolveReceivedFilePath(outDir: string, filename: string): string | null {
+  const base = basename(filename);
+  if (!base || base === "." || filename !== base || isAbsolute(filename)) {
+    return null;
+  }
+  if (filename.includes("/") || filename.includes("\\")) {
+    return null;
+  }
+
+  const outRoot = resolve(outDir);
+  const filePath = resolve(outRoot, base);
+  if (!filePath.startsWith(`${outRoot}${sep}`)) {
+    return null;
+  }
+  return filePath;
+}
 
 // --- Persisted agent state ---
 
@@ -103,7 +120,11 @@ export class P2PAgent extends EventEmitter {
     this.swarm.on("file", (event: any) => {
       const outDir = join(this.config.dataDir, "received");
       mkdirSync(outDir, { recursive: true });
-      const filePath = join(outDir, event.filename);
+      const filePath = resolveReceivedFilePath(outDir, event.filename);
+      if (!filePath) {
+        console.error(`[Agent] Rejected unsafe filename: ${event.filename} from ${event.from}`);
+        return;
+      }
       writeFileSync(filePath, Buffer.from(event.data, "base64"));
       console.error(`[Agent] Received file: ${event.filename} (${event.size} bytes) from ${event.from} → ${filePath}`);
       this.emit("file:received", { from: event.from, filename: event.filename, path: filePath, size: event.size });
@@ -186,7 +207,7 @@ export class P2PAgent extends EventEmitter {
   sendFile(targetAgentId: AgentId, filePath: string): { success: boolean; error?: string } {
     if (!existsSync(filePath)) return { success: false, error: "File not found" };
     const data = readFileSync(filePath);
-    const filename = filePath.split("/").pop() || "file";
+    const filename = basename(filePath.replace(/\\/g, "/")) || "file";
     const ext = filename.split(".").pop()?.toLowerCase() || "";
     const mimeMap: Record<string, string> = {
       png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",

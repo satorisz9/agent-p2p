@@ -129,7 +129,7 @@ export class ReputationManager extends EventEmitter {
     const disputePenalty = Math.min(record.disputes * 0.1, 0.5);
 
     // Proof bonus
-    const proofBonus = record.verified_proofs > 0
+    const proofBonus = record.verified_proofs > 0 && record.tasks_completed > 0
       ? Math.min(record.verified_proofs / record.tasks_completed * 0.1, 0.1)
       : 0;
 

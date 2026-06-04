@@ -25,7 +25,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from "http";
-import { randomBytes } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { P2PAgent } from "../agent/core";
@@ -116,7 +116,11 @@ function checkBearerAuth(req: IncomingMessage, expectedToken: string): boolean {
   if (!authHeader) return false;
   const parts = authHeader.split(" ");
   if (parts.length !== 2 || parts[0] !== "Bearer") return false;
-  return parts[1] === expectedToken;
+  // HMAC比較で入力長の情報すら漏らさない（ダイジェストは常に32バイト）
+  const key = randomBytes(32);
+  const actual = createHmac("sha256", key).update(parts[1]).digest();
+  const expected = createHmac("sha256", key).update(expectedToken).digest();
+  return timingSafeEqual(actual, expected);
 }
 
 type SwarmTaskPeer = {
